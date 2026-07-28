@@ -230,7 +230,10 @@ Before any model call, candidate sources that strongly resemble a second job
 description are rejected so hiring requirements cannot be mistaken for
 candidate evidence. Before any PDF is created, a deterministic document gate
 rejects fragments, missing Summary/Skills/Experience/Education sections, fewer
-than four achievement bullets, drafts over 950 words, and unfocused Skills sections. OpenRouter
+than four achievement bullets, drafts over 950 words, and unfocused Skills
+sections. Model outputs with more than five valid Skills categories are
+losslessly consolidated into five professional ATS-safe rows before scoring
+and PDF rendering. OpenRouter
 reasoning is disabled for document-writing calls so hidden reasoning tokens
 cannot truncate the visible resume. Experience blocks are normalized into
 reverse chronological order without changing their text.

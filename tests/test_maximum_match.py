@@ -1,3 +1,4 @@
+import re
 import time
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -235,6 +236,60 @@ Degree
         self.assertIn("**Frameworks:** React, ASP.NET Core", normalized)
         self.assertIn("**Tools & Practices:** Docker, CI/CD", normalized)
         self.assertNotIn("- Frameworks:", normalized)
+        self.assertEqual(
+            normalize_skill_category_markdown(normalized),
+            normalized,
+        )
+
+    def test_seven_skill_categories_are_losslessly_consolidated(self):
+        draft = """\
+# Candidate
+
+## Skills
+**Languages:** Node.js, TypeScript, C#, JavaScript
+**Frontend:** Next.js, React
+**Backend:** .NET Core, Express.js
+**Databases:** PostgreSQL, MySQL, SQL Server
+**APIs & Payments:** REST APIs, Stripe, Finix, Square
+**Cloud & DevOps:** AWS, DigitalOcean, Vercel, Docker
+**Tools & Practices:** GitHub, CI/CD, Agile
+
+## Education
+Degree
+"""
+        normalized = normalize_skill_category_markdown(draft)
+        skill_section = normalized.split("## Skills\n", 1)[1].split(
+            "## Education", 1
+        )[0]
+        categories = re.findall(r"\*\*[^*\n]+:\*\*", skill_section)
+        self.assertEqual(len(categories), 5)
+        for skill in (
+            "Node.js",
+            "TypeScript",
+            "C#",
+            "JavaScript",
+            "Next.js",
+            "React",
+            ".NET Core",
+            "Express.js",
+            "PostgreSQL",
+            "MySQL",
+            "SQL Server",
+            "REST APIs",
+            "Stripe",
+            "Finix",
+            "Square",
+            "AWS",
+            "DigitalOcean",
+            "Vercel",
+            "Docker",
+            "GitHub",
+            "CI/CD",
+            "Agile",
+        ):
+            self.assertIn(skill, skill_section)
+        self.assertIn("**Frameworks & Libraries:**", skill_section)
+        self.assertIn("**Data, APIs & Integrations:**", skill_section)
         self.assertEqual(
             normalize_skill_category_markdown(normalized),
             normalized,
@@ -602,6 +657,94 @@ class MaximumMatchEndpointTests(unittest.TestCase):
 
 
 class ResumeGenerationQualityGateTests(unittest.TestCase):
+    @patch("app.routers.resume.pdf_renderer.render_pdf")
+    @patch(
+        "app.routers.resume.adk_runner.run_pipeline",
+        new_callable=AsyncMock,
+    )
+    def test_seven_skill_categories_are_repaired_before_pdf(
+        self, run_pipeline, render_pdf
+    ):
+        resume = """\
+# Candidate
+candidate@example.com | Austin, TX
+
+## Summary
+Full-stack engineer delivering secure payment services, REST APIs, database
+workflows, responsive applications, and reliable cloud deployments. Combines
+real Node.js, TypeScript, C#/.NET, JavaScript, SQL, testing, and collaborative
+delivery experience to support production-bound systems and practical customer
+outcomes across modern service-oriented product environments.
+
+## Skills
+**Languages:** Node.js, TypeScript, C#, JavaScript
+**Frontend:** Next.js, React
+**Backend:** .NET Core, Express.js
+**Databases:** PostgreSQL, MySQL, SQL Server
+**APIs & Payments:** REST APIs, Stripe, Finix, Square
+**Cloud & DevOps:** AWS, DigitalOcean, Vercel, Docker
+**Tools & Practices:** GitHub, CI/CD, Agile
+
+## Experience
+### Software Engineer — Example Company | Austin, TX | 2024 – Present
+
+- Built React interfaces backed by C# and Node.js services for internal users.
+- Implemented REST APIs and SQL-backed application workflows.
+- Supported CI/CD delivery, testing, and production troubleshooting.
+- Collaborated with engineers to document and release maintainable features.
+
+## Education
+Bachelor of Science in Computer Science
+"""
+        resume += " delivery" * 100
+        run_pipeline.return_value = {
+            "session_id": "skillsrepair123",
+            "approved": True,
+            "resume_markdown": resume,
+            "cover_letter_markdown": "",
+            "cover_letter_error": "",
+            "jd_analysis": JD_ANALYSIS,
+            "candidate_profile": "## Contact\nCandidate",
+            "match_strategy": MATCH_STRATEGY,
+            "review_feedback": (
+                '{"score":95,"ats_coverage":100,"fabrication_count":0,'
+                '"approved":true,"feedback":[]}'
+            ),
+            "review_score": 95,
+            "ats_coverage": 100,
+            "review_valid": True,
+            "revision_count": 1,
+            "usage": {},
+            "engine": "google_adk",
+            "model_name": "gemini-test",
+            "langsmith_enabled": False,
+            "langsmith_project": None,
+            "trace_content": False,
+        }
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/resume/generate",
+                data={
+                    "job_description": "Build a C# and React application.",
+                    "resume_text": "Candidate source material.",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        skills = response.json()["resume_markdown"].split(
+            "## Skills", 1
+        )[1].split("## Experience", 1)[0]
+        self.assertEqual(
+            len(re.findall(r"\*\*[^*\n]+:\*\*", skills)),
+            5,
+        )
+        self.assertIn("Stripe", skills)
+        self.assertIn("DigitalOcean", skills)
+        self.assertEqual(
+            response.json()["scores"]["supported_ats_coverage"],
+            100,
+        )
+        render_pdf.assert_called_once()
+
     @patch(
         "app.routers.resume.adk_runner.run_pipeline",
         new_callable=AsyncMock,

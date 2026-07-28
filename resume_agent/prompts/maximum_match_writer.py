@@ -64,7 +64,10 @@ Avoid unsupported superlatives such as "mastery", "expert", "elite", or
 Use 3-5 category-grouped lines ordered by relevance, with exactly ONE category
 per physical line. Include every truthfully claimable verbatim keyword from
 the placement plan, but never create a catch-all "Specialized Areas" keyword
-dump.
+dump. When the inventory spans more than five labels, consolidate them into:
+Languages; Frameworks & Libraries; Data, APIs & Integrations; Cloud & DevOps;
+and Tools, Practices & Domains as applicable. Do not omit a supported skill
+merely to meet the five-category limit.
 
 ## Experience
 ### Title — Employer | Location | Dates

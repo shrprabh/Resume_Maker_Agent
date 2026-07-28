@@ -133,14 +133,119 @@ def normalize_experience_chronology(markdown_text: str) -> str:
     )
 
 
+_CONSOLIDATED_SKILL_BUCKETS = (
+    (
+        "Languages",
+        ("language", "programming"),
+    ),
+    (
+        "Frameworks & Libraries",
+        (
+            "framework",
+            "library",
+            "frontend",
+            "front end",
+            "backend",
+            "back end",
+            "web technolog",
+            "runtime",
+        ),
+    ),
+    (
+        "Data, APIs & Integrations",
+        (
+            "database",
+            "data",
+            "sql",
+            "api",
+            "integration",
+            "payment",
+            "machine learning",
+            "artificial intelligence",
+            "analytics",
+        ),
+    ),
+    (
+        "Cloud & DevOps",
+        (
+            "cloud",
+            "infrastructure",
+            "devops",
+            "dev ops",
+            "deployment",
+            "container",
+            "orchestration",
+            "ci cd",
+            "platform",
+        ),
+    ),
+)
+
+
+def _consolidated_skill_bucket(label: str) -> str:
+    canonical = canonical_markdown_heading(label)
+    for bucket, markers in _CONSOLIDATED_SKILL_BUCKETS:
+        if any(marker in canonical for marker in markers):
+            return bucket
+    return "Tools, Practices & Domains"
+
+
+def _skill_category_segments(body: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """Parse one or several bold Skills categories from each physical line."""
+    categories: list[tuple[str, str]] = []
+    unparsed: list[str] = []
+    marker = re.compile(r"\*\*([^*\n]+):\*\*")
+    for line in body.splitlines():
+        matches = list(marker.finditer(line))
+        if not matches:
+            if line.strip():
+                unparsed.append(line.strip())
+            continue
+        prefix = line[: matches[0].start()].strip()
+        if prefix:
+            unparsed.append(prefix)
+        for index, match in enumerate(matches):
+            end = (
+                matches[index + 1].start()
+                if index + 1 < len(matches)
+                else len(line)
+            )
+            values = line[match.end() : end].strip()
+            if values:
+                categories.append((match.group(1).strip(), values))
+    return categories, unparsed
+
+
+def _consolidate_skill_categories(body: str) -> str:
+    """Reduce verbose model category sets to five lossless ATS-safe rows."""
+    categories, unparsed = _skill_category_segments(body)
+    if len(categories) <= 5:
+        return body
+
+    buckets: dict[str, list[str]] = {}
+    for label, raw_values in categories:
+        bucket = _consolidated_skill_bucket(label)
+        buckets.setdefault(bucket, []).append(raw_values)
+
+    lines = [
+        f"**{label}:** {', '.join(values)}"
+        for label, values in buckets.items()
+        if values
+    ]
+    lines.extend(unparsed)
+    trailing_newline = "\n" if body.endswith("\n") else ""
+    return "\n".join(lines) + trailing_newline
+
+
 def normalize_skill_category_markdown(markdown_text: str) -> str:
-    """Standardize model-emitted Skills labels without changing their claims.
+    """Standardize and safely consolidate model-emitted Skills categories.
 
     Models commonly return valid category lines such as ``Languages: C#`` or
     ``- Frameworks: React`` even when asked for ``**Languages:** C#``.  The
-    content is already usable and evidence-grounded; this lossless pass only
-    removes an optional list marker and bolds the existing label so the
-    renderer and deterministic structure audit interpret it consistently.
+    content is already usable and evidence-grounded; this pass removes an
+    optional list marker and bolds the existing label. If a model emits more
+    than five categories, compatible rows are consolidated into five standard
+    buckets while every unique skill value is retained verbatim.
     """
     pattern = r"(^##\s+Skills\s*$\n)(.*?)(?=^##\s+|\Z)"
     match = re.search(pattern, markdown_text or "", re.MULTILINE | re.DOTALL | re.I)
@@ -164,7 +269,9 @@ def normalize_skill_category_markdown(markdown_text: str) -> str:
         else:
             normalized_lines.append(line)
 
-    normalized_body = "".join(normalized_lines)
+    normalized_body = _consolidate_skill_categories(
+        "".join(normalized_lines)
+    )
     return (
         markdown_text[: match.start(2)]
         + normalized_body
@@ -486,7 +593,9 @@ def parse_reviewer_decision(text: str) -> ReviewerDecision | None:
 
 def audit_resume_structure(resume_markdown: str) -> ResumeStructureAudit:
     """Reject fragments and underdeveloped drafts before model approval."""
-    text = (resume_markdown or "").strip()
+    text = normalize_skill_category_markdown(
+        resume_markdown or ""
+    ).strip()
     headings = {
         match.group(1).strip().casefold()
         for match in re.finditer(r"^##\s+(.+?)\s*$", text, re.MULTILINE)

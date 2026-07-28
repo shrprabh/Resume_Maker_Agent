@@ -61,6 +61,10 @@ Avoid unsupported superlatives such as "mastery", "expert", "elite", or
 Use 3-5 category-grouped lines, with exactly ONE category per physical line
 (e.g. "**Languages:** Python, Go, SQL"). Order by relevance. Keep categories
 compact; do not create a keyword-dump category such as "Specialized Areas".
+When the inventory spans more than five labels, consolidate them into:
+Languages; Frameworks & Libraries; Data, APIs & Integrations; Cloud & DevOps;
+and Tools, Practices & Domains as applicable. Do not omit a supported skill
+merely to meet the five-category limit.
 Use verbatim ATS keyword forms only when evidence supports them.
 
 ## Experience
