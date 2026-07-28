@@ -5,6 +5,7 @@ import os
 import re
 import time
 import unicodedata
+import uuid
 from dataclasses import dataclass
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
@@ -19,6 +20,8 @@ from ..schemas.resume import (
     MaximumMatchResponse,
     PipelineArtifacts,
     ResumeGenerateResponse,
+    SourceManifestItem,
+    SourcePreflightResponse,
 )
 from ..services import adk_runner, langgraph_runner, pdf_renderer
 from ..services.credentials import normalize_api_key, normalize_env_text
@@ -35,13 +38,15 @@ from ..services.input_validation import (
     candidate_context_error,
     looks_like_job_description,
 )
+from ..services.resume_repair import repair_resume_for_publication
 from ..services.resume_scoring import (
+    build_maximum_match_insights,
     build_scorecard,
     normalize_experience_chronology,
     normalize_skill_category_markdown,
     parse_reviewer_decision,
 )
-from ..services.text_extraction import extract_text
+from ..services.text_extraction import ExtractionResult, extract_text_result
 
 router = APIRouter(prefix="/api/resume", tags=["resume"])
 logger = logging.getLogger(__name__)
@@ -71,6 +76,23 @@ class _MaximumMatchContext:
     response_signature: str | None = None
 
 
+@dataclass
+class _SourceBundle:
+    """Exact, candidate-reviewed source context prepared without model calls."""
+
+    candidate_text: str
+    source_manifest: list[SourceManifestItem]
+    created_at: float
+
+
+@dataclass
+class _PreparedSources:
+    candidate_text: str
+    source_manifest: list[SourceManifestItem]
+    ready: bool
+    warnings: list[str]
+
+
 # Current local deployment is intentionally ephemeral. Keeping only compact
 # analyses (not raw uploads) lets the optional tab reuse completed work without
 # paying for the first three agents again. The commercial persistence plan
@@ -79,6 +101,43 @@ _MAXIMUM_CONTEXT_TTL_SECONDS = 60 * 60
 _MAXIMUM_CONTEXT_LIMIT = 64
 _MAXIMUM_CONTEXTS: dict[str, _MaximumMatchContext] = {}
 _MAXIMUM_LOCKS: dict[str, asyncio.Lock] = {}
+
+_SOURCE_BUNDLE_TTL_SECONDS = 60 * 60
+_SOURCE_BUNDLE_LIMIT = 64
+_SOURCE_BUNDLES: dict[str, _SourceBundle] = {}
+
+
+def _prune_source_bundles() -> None:
+    cutoff = time.monotonic() - _SOURCE_BUNDLE_TTL_SECONDS
+    expired = [
+        bundle_id
+        for bundle_id, bundle in _SOURCE_BUNDLES.items()
+        if bundle.created_at < cutoff
+    ]
+    for bundle_id in expired:
+        _SOURCE_BUNDLES.pop(bundle_id, None)
+    while len(_SOURCE_BUNDLES) > _SOURCE_BUNDLE_LIMIT:
+        oldest_id = min(
+            _SOURCE_BUNDLES,
+            key=lambda bundle_id: _SOURCE_BUNDLES[bundle_id].created_at,
+        )
+        _SOURCE_BUNDLES.pop(oldest_id, None)
+
+
+def _source_bundle(bundle_id: str) -> _SourceBundle:
+    """Resolve an opaque source token without revealing whether it was valid."""
+
+    _prune_source_bundles()
+    bundle = _SOURCE_BUNDLES.get(bundle_id.strip())
+    if bundle is None:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "This source preview expired or is unavailable. Check the "
+                "uploaded source text again before generating."
+            ),
+        )
+    return bundle
 
 
 def _prune_maximum_contexts() -> None:
@@ -276,6 +335,306 @@ async def health() -> HealthResponse:
 # More context = better fact inventory, but keep a ceiling so a huge document
 # dump can't blow up latency/cost. Per-file cap lives in text_extraction.
 MAX_TOTAL_CHARS = 150_000
+MAX_SOURCE_FILES = 20
+MAX_SOURCE_BYTES = 15 * 1024 * 1024
+_WORD_RE = re.compile(r"\b[\w]+(?:[’'-][\w]+)*\b", re.UNICODE)
+_OMISSION_MARKER = "\n\n[... middle source text omitted ...]\n\n"
+
+
+def _source_name(value: str) -> str:
+    """Make an upload name safe for both display and document separators."""
+
+    cleaned = " ".join(
+        unicodedata.normalize("NFC", value or "document")
+        .replace("\x00", " ")
+        .replace("=", " ")
+        .split()
+    )
+    return (cleaned or "document")[:180]
+
+
+def _fair_allocations(lengths: list[int], budget: int) -> list[int]:
+    """Share a total character budget without letting one source crowd out others."""
+
+    if not lengths:
+        return []
+    if sum(lengths) <= budget:
+        return lengths.copy()
+    allocations = [0] * len(lengths)
+    active = set(range(len(lengths)))
+    remaining = max(0, budget)
+    while active and remaining:
+        share = remaining // len(active)
+        small = [index for index in active if lengths[index] <= share]
+        if small:
+            for index in small:
+                allocations[index] = lengths[index]
+                remaining -= lengths[index]
+                active.remove(index)
+            continue
+        for index in sorted(active):
+            allocations[index] = share
+        remainder = remaining - share * len(active)
+        for index in sorted(active)[:remainder]:
+            allocations[index] += 1
+        remaining = 0
+    return allocations
+
+
+def _head_tail_text(text: str, limit: int) -> str:
+    """Keep both identity/summary and later Education sections when compacting."""
+
+    if len(text) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    if limit <= len(_OMISSION_MARKER) + 40:
+        return text[:limit].rstrip()
+    available = limit - len(_OMISSION_MARKER)
+    head_chars = (available * 2) // 3
+    tail_chars = available - head_chars
+    head = text[:head_chars]
+    head_boundary = max(head.rfind("\n"), head.rfind(". "))
+    if head_boundary >= int(head_chars * 0.8):
+        head = head[: head_boundary + 1]
+    head = head.rstrip()
+
+    tail = text[-tail_chars:]
+    newline_boundary = tail.find("\n")
+    sentence_boundary = tail.find(". ")
+    boundaries = [
+        boundary
+        for boundary in (newline_boundary, sentence_boundary)
+        if 0 <= boundary <= int(tail_chars * 0.2)
+    ]
+    if boundaries:
+        tail = tail[min(boundaries) + 1 :]
+    tail = tail.lstrip()
+    return f"{head}{_OMISSION_MARKER}{tail}"[:limit].rstrip()
+
+
+async def _read_source_results(
+    *,
+    files: list[UploadFile],
+    resume_file: UploadFile | None,
+    resume_text: str | None,
+) -> list[ExtractionResult]:
+    results: list[ExtractionResult] = []
+    uploads = [upload for upload in files if upload is not None]
+    if resume_file is not None:
+        uploads.append(resume_file)
+    if len(uploads) > MAX_SOURCE_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Upload at most {MAX_SOURCE_FILES} source documents per "
+                "generation."
+            ),
+        )
+    for upload in uploads:
+        name = _source_name(upload.filename or "document")
+        content = await upload.read(MAX_SOURCE_BYTES + 1)
+        if len(content) > MAX_SOURCE_BYTES:
+            suffix = name.rsplit(".", 1)[-1].casefold() if "." in name else ""
+            results.append(
+                ExtractionResult(
+                    filename=name,
+                    kind=(
+                        suffix
+                        if suffix in {"pdf", "docx", "txt", "md"}
+                        else "unsupported"
+                    ),
+                    status="failed",
+                    bytes=len(content),
+                    pages=None,
+                    extracted_chars=0,
+                    words=0,
+                    truncated=False,
+                    warnings=[
+                        f"File exceeds the {MAX_SOURCE_BYTES // (1024 * 1024)} MB "
+                        "per-source upload limit."
+                    ],
+                    text="",
+                    detected_sections=[],
+                )
+            )
+            continue
+        results.append(extract_text_result(name, content))
+
+    if resume_text and resume_text.strip():
+        results.append(
+            extract_text_result(
+                "Pasted candidate context.txt",
+                resume_text.strip().encode("utf-8"),
+            )
+        )
+    return results
+
+
+def _prepare_sources(results: list[ExtractionResult]) -> _PreparedSources:
+    if not results:
+        return _PreparedSources(
+            candidate_text="",
+            source_manifest=[],
+            ready=False,
+            warnings=[
+                "Provide at least one PDF, DOCX, TXT, MD, or pasted candidate context."
+            ],
+        )
+
+    statuses: list[str] = []
+    per_source_warnings: list[list[str]] = []
+    for result in results:
+        status = result.status
+        warnings = list(result.warnings)
+        if status == "ok" and looks_like_job_description(result.text):
+            status = "rejected"
+            warnings.append(candidate_context_error(result.filename))
+        statuses.append(status)
+        per_source_warnings.append(warnings)
+
+    valid_indices = [
+        index for index, status in enumerate(statuses) if status == "ok"
+    ]
+    multi_source = len(valid_indices) > 1
+    separator_overhead = 0
+    if multi_source:
+        for position, index in enumerate(valid_indices):
+            prefix = f"=== DOCUMENT: {_source_name(results[index].filename)} ===\n"
+            separator_overhead += len(prefix)
+            if position:
+                separator_overhead += 2
+    content_budget = max(0, MAX_TOTAL_CHARS - separator_overhead)
+    allocations = _fair_allocations(
+        [len(results[index].text) for index in valid_indices],
+        content_budget,
+    )
+    included_by_index = {
+        index: _head_tail_text(results[index].text, allocation)
+        for index, allocation in zip(valid_indices, allocations, strict=True)
+    }
+
+    manifest: list[SourceManifestItem] = []
+    for index, result in enumerate(results):
+        included_text = included_by_index.get(index, result.text)
+        inclusion_truncated = (
+            statuses[index] == "ok"
+            and len(included_text) < len(result.text)
+        )
+        warnings = per_source_warnings[index]
+        if inclusion_truncated:
+            warnings.append(
+                "Only a fair head-and-tail share of this source was included "
+                "because the combined knowledge base exceeds "
+                f"{MAX_TOTAL_CHARS:,} characters."
+            )
+        manifest.append(
+            SourceManifestItem(
+                name=_source_name(result.filename),
+                kind=result.kind,
+                status=statuses[index],
+                bytes=result.bytes,
+                pages=result.pages,
+                extracted_chars=result.extracted_chars,
+                included_chars=(
+                    len(included_text) if statuses[index] == "ok" else 0
+                ),
+                words=(
+                    len(_WORD_RE.findall(included_text))
+                    if statuses[index] == "ok"
+                    else result.words
+                ),
+                truncated=result.truncated or inclusion_truncated,
+                detected_sections=list(result.detected_sections),
+                warnings=warnings,
+                text=included_text,
+            )
+        )
+
+    candidate_documents = [
+        (item.name, item.text)
+        for item in manifest
+        if item.status == "ok" and item.text
+    ]
+    if len(candidate_documents) == 1:
+        candidate_text = candidate_documents[0][1]
+    else:
+        candidate_text = "\n\n".join(
+            f"=== DOCUMENT: {_source_name(name)} ===\n{text}"
+            for name, text in candidate_documents
+        )
+
+    warnings: list[str] = []
+    if any(item.truncated for item in manifest):
+        warnings.append(
+            "One or more sources were compacted. Review each extracted-text "
+            "preview; the displayed text is exactly what generation will use."
+        )
+    if any(item.status != "ok" for item in manifest):
+        warnings.append(
+            "One or more sources could not be included. Remove or replace "
+            "them before generating."
+        )
+    ready = bool(candidate_documents) and all(
+        item.status == "ok" for item in manifest
+    )
+    return _PreparedSources(
+        candidate_text=candidate_text,
+        source_manifest=manifest,
+        ready=ready,
+        warnings=warnings,
+    )
+
+
+def _store_source_bundle(prepared: _PreparedSources) -> str:
+    _prune_source_bundles()
+    bundle_id = uuid.uuid4().hex
+    _SOURCE_BUNDLES[bundle_id] = _SourceBundle(
+        candidate_text=prepared.candidate_text,
+        source_manifest=[
+            SourceManifestItem.model_validate(item.model_dump())
+            for item in prepared.source_manifest
+        ],
+        created_at=time.monotonic(),
+    )
+    _prune_source_bundles()
+    return bundle_id
+
+
+@router.post(
+    "/sources/preflight",
+    response_model=SourcePreflightResponse,
+)
+async def preflight_sources(
+    files: list[UploadFile] = File(default=[]),
+    resume_file: UploadFile | None = File(None),
+    resume_text: str | None = Form(None),
+) -> SourcePreflightResponse:
+    """Extract and preview candidate sources without calling an AI model."""
+
+    prepared = _prepare_sources(
+        await _read_source_results(
+            files=files,
+            resume_file=resume_file,
+            resume_text=resume_text,
+        )
+    )
+    bundle_id = _store_source_bundle(prepared) if prepared.ready else None
+    return SourcePreflightResponse(
+        source_bundle_id=bundle_id,
+        ready=prepared.ready,
+        sources=prepared.source_manifest,
+        total_chars=sum(
+            item.included_chars for item in prepared.source_manifest
+        ),
+        total_words=sum(
+            item.words
+            for item in prepared.source_manifest
+            if item.status == "ok"
+        ),
+        warnings=prepared.warnings,
+        expires_in_minutes=math.ceil(_SOURCE_BUNDLE_TTL_SECONDS / 60),
+    )
 
 
 @router.post("/generate", response_model=ResumeGenerateResponse)
@@ -284,6 +643,7 @@ async def generate_resume(
     files: list[UploadFile] = File(default=[]),
     resume_file: UploadFile | None = File(None),
     resume_text: str | None = Form(None),
+    source_bundle_id: str | None = Form(None),
     engine: str = Form("google_adk"),
     model_name: str | None = Form(langgraph_runner.DEFAULT_OPENROUTER_MODEL),
     langsmith_enabled: bool = Form(False),
@@ -300,56 +660,64 @@ async def generate_resume(
     if not job_description.strip():
         raise HTTPException(status_code=422, detail="job_description must not be blank")
 
-    documents: list[tuple[str, str]] = []  # (display name, extracted text)
-
-    uploads = [f for f in files if f is not None]
-    if resume_file is not None:
-        uploads.append(resume_file)
-    for upload in uploads:
-        name = upload.filename or "document"
-        content = await upload.read()
-        if not content:
-            raise HTTPException(status_code=400, detail=f"'{name}' is empty")
-        text, status = extract_text(name, content)
-        if status == "unsupported":
-            raise HTTPException(
-                status_code=422,
-                detail=f"'{name}': unsupported type — upload PDF, DOCX, TXT, or MD",
-            )
-        if status == "failed":
-            raise HTTPException(
-                status_code=422,
-                detail=f"'{name}': could not extract text (scanned/image-only PDF?)",
-            )
-        if looks_like_job_description(text):
-            raise HTTPException(
-                status_code=422,
-                detail=candidate_context_error(name),
-            )
-        documents.append((name, text))
-
-    if resume_text and resume_text.strip():
-        if looks_like_job_description(resume_text):
-            raise HTTPException(
-                status_code=422,
-                detail=candidate_context_error("pasted_text"),
-            )
-        documents.append(("pasted_text", resume_text.strip()))
-
-    if not documents:
-        raise HTTPException(
-            status_code=400, detail="Provide at least one of: files, resume_file, resume_text"
-        )
-
-    # The document markers matter: profile_analyzer's prompt tells it to merge
-    # and dedupe facts "across ALL documents", keyed off these separators.
-    if len(documents) == 1:
-        candidate_text = documents[0][1]
+    if source_bundle_id and source_bundle_id.strip():
+        bundle = _source_bundle(source_bundle_id)
+        candidate_text = bundle.candidate_text
+        source_manifest = [
+            SourceManifestItem.model_validate(item.model_dump())
+            for item in bundle.source_manifest
+        ]
     else:
-        candidate_text = "\n\n".join(
-            f"=== DOCUMENT: {name} ===\n{text}" for name, text in documents
+        prepared = _prepare_sources(
+            await _read_source_results(
+                files=files,
+                resume_file=resume_file,
+                resume_text=resume_text,
+            )
         )
-    candidate_text = candidate_text[:MAX_TOTAL_CHARS]
+        if not prepared.source_manifest:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Provide at least one of: files, resume_file, resume_text, "
+                    "or source_bundle_id"
+                ),
+            )
+        rejected = next(
+            (
+                item
+                for item in prepared.source_manifest
+                if item.status != "ok"
+            ),
+            None,
+        )
+        if rejected is not None:
+            if rejected.status == "unsupported":
+                detail = (
+                    f"'{rejected.name}': unsupported type — upload PDF, "
+                    "DOCX, TXT, or MD"
+                )
+            elif rejected.status == "rejected":
+                detail = (
+                    rejected.warnings[-1]
+                    if rejected.warnings
+                    else candidate_context_error(rejected.name)
+                )
+            elif rejected.bytes == 0:
+                detail = f"'{rejected.name}' is empty"
+            elif rejected.warnings:
+                detail = f"'{rejected.name}': {rejected.warnings[0]}"
+            else:
+                detail = (
+                    f"'{rejected.name}': could not extract text "
+                    "(scanned/image-only PDF?)"
+                )
+            raise HTTPException(
+                status_code=400 if rejected.bytes == 0 else 422,
+                detail=detail,
+            )
+        candidate_text = prepared.candidate_text
+        source_manifest = prepared.source_manifest
 
     if engine not in {"google_adk", "langgraph_openrouter"}:
         raise HTTPException(
@@ -404,6 +772,13 @@ async def generate_resume(
             result.get("resume_markdown", "")
         )
     )
+    publication_repair = repair_resume_for_publication(
+        result["resume_markdown"],
+        candidate_profile=result.get("candidate_profile", ""),
+        jd_analysis=result.get("jd_analysis", ""),
+        match_strategy=result.get("match_strategy", ""),
+    )
+    result["resume_markdown"] = publication_repair.markdown.strip()
     if not result["resume_markdown"].strip():
         raise HTTPException(
             status_code=502, detail="Pipeline produced no resume — check server logs"
@@ -509,7 +884,14 @@ async def generate_resume(
             [result["cover_letter_error"]]
             if result.get("cover_letter_error")
             else []
-        ),
+        )
+        + list(publication_repair.repair_notes)
+        + [
+            f"{item.name}: {warning}"
+            for item in source_manifest
+            for warning in item.warnings
+        ],
+        source_manifest=source_manifest,
         maximum_match_generate_url=f"/api/resume/maximum-match/{sid}",
         session_id=sid,
     )
@@ -648,6 +1030,13 @@ async def generate_maximum_match(
                 result.get("resume_markdown", "")
             )
         ).strip()
+        publication_repair = repair_resume_for_publication(
+            maximum_resume,
+            candidate_profile=candidate_profile,
+            jd_analysis=context.jd_analysis,
+            match_strategy=match_strategy,
+        )
+        maximum_resume = publication_repair.markdown.strip()
         if not maximum_resume:
             raise HTTPException(
                 status_code=502,
@@ -656,7 +1045,16 @@ async def generate_maximum_match(
                     "The authentic resume remains available."
                 ),
             )
-        maximum_scores = MatchScorecard.model_validate(result["scores"])
+        maximum_scores = MatchScorecard.model_validate(
+            build_scorecard(
+                resume_markdown=maximum_resume,
+                jd_analysis=context.jd_analysis,
+                match_strategy=match_strategy,
+                reviewer=parse_reviewer_decision(
+                    result.get("review_feedback", "")
+                ),
+            ).model_dump()
+        )
         if not maximum_scores.structure_valid:
             issues = "; ".join(maximum_scores.structure_issues[:4])
             raise HTTPException(
@@ -696,7 +1094,11 @@ async def generate_maximum_match(
             resume_filename=maximum_filename,
             approved=bool(result.get("approved")),
             scores=maximum_scores,
-            insights_markdown=result.get("insights_markdown", ""),
+            insights_markdown=build_maximum_match_insights(
+                maximum_scores,
+                match_strategy,
+                result.get("review_feedback", ""),
+            ),
             review_feedback=result.get("review_feedback", ""),
             revision_count=result.get("revision_count"),
             usage=result.get("usage", {}),
@@ -705,7 +1107,10 @@ async def generate_maximum_match(
             langsmith_enabled=result.get("langsmith_enabled", False),
             langsmith_project=result.get("langsmith_project"),
             trace_content=result.get("trace_content", False),
-            warnings=[warning] if warning else [],
+            warnings=(
+                ([warning] if warning else [])
+                + list(publication_repair.repair_notes)
+            ),
             evidence_count=len(evidence),
             resolved_gaps=resolved_gap_names(evidence),
             session_id=session_id,

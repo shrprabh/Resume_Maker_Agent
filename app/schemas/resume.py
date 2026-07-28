@@ -35,6 +35,38 @@ class MatchScorecard(BaseModel):
     unsupported_keywords: list[str] = Field(default_factory=list)
 
 
+class SourceManifestItem(BaseModel):
+    """Candidate-visible extraction result for one knowledge source."""
+
+    name: str
+    kind: str
+    status: str
+    bytes: int = 0
+    pages: int | None = None
+    extracted_chars: int = 0
+    included_chars: int = 0
+    words: int = 0
+    truncated: bool = False
+    detected_sections: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    # This is the exact source text included in the cached model context. It is
+    # intentionally returned so the candidate can verify extraction before
+    # spending model tokens.
+    text: str = ""
+
+
+class SourcePreflightResponse(BaseModel):
+    """Extraction-only response; no model is called by this operation."""
+
+    source_bundle_id: str | None = None
+    ready: bool = False
+    sources: list[SourceManifestItem] = Field(default_factory=list)
+    total_chars: int = 0
+    total_words: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    expires_in_minutes: int = 60
+
+
 class ResumeGenerateResponse(BaseModel):
     resume_markdown: str
     cover_letter_markdown: str
@@ -58,6 +90,7 @@ class ResumeGenerateResponse(BaseModel):
     langsmith_project: str | None = None
     trace_content: bool = False
     warnings: list[str] = Field(default_factory=list)
+    source_manifest: list[SourceManifestItem] = Field(default_factory=list)
     maximum_match_generate_url: str
     session_id: str
 

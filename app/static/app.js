@@ -2,6 +2,11 @@ const form = document.querySelector("#generator-form");
 const fileInput = document.querySelector("#file-input");
 const dropzone = document.querySelector("#dropzone");
 const fileList = document.querySelector("#file-list");
+const sourcePreflight = document.querySelector("#source-preflight");
+const sourcePreflightTitle = document.querySelector("#source-preflight-title");
+const sourcePreflightCopy = document.querySelector("#source-preflight-copy");
+const sourceManifestElement = document.querySelector("#source-manifest");
+const checkSourcesButton = document.querySelector("#check-sources");
 const resumeText = document.querySelector("#resume-text");
 const jobDescription = document.querySelector("#job-description");
 const contextCount = document.querySelector("#context-count");
@@ -55,6 +60,12 @@ let serverLangsmithConfigured = false;
 let currentGeneration = null;
 let maximumMatchData = null;
 let maximumGaps = [];
+let sourceBundleId = "";
+let sourceManifest = [];
+let sourceRevision = 0;
+let sourceBundleRevision = -1;
+let sourcePreflightController = null;
+let sourcePreflightTimer = null;
 
 const selectedEngine = () =>
   document.querySelector('input[name="engine"]:checked').value;
@@ -251,32 +262,223 @@ function renderFiles() {
     const name = document.createElement("strong");
     name.textContent = file.name;
     const size = document.createElement("span");
-    size.textContent = readableSize(file.size);
+    const inspected = sourceBundleRevision === sourceRevision
+      ? sourceManifest[index]
+      : null;
+    size.textContent = inspected?.status === "ready" || inspected?.status === "ok"
+      ? `${readableSize(file.size)} · ${Number(inspected.words || 0).toLocaleString()} words`
+      : readableSize(file.size);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.setAttribute("aria-label", `Remove ${file.name}`);
     remove.textContent = "×";
     remove.addEventListener("click", () => {
       selectedFiles.splice(index, 1);
-      renderFiles();
+      invalidateSourceBundle(true);
     });
     item.append(name, size, remove);
     fileList.append(item);
   });
 }
 
-function addFiles(files) {
-  const allowed = [".pdf", ".docx", ".txt", ".md"];
-  const incoming = [...files].filter((file) =>
-    allowed.some((extension) => file.name.toLowerCase().endsWith(extension))
-  );
-  incoming.forEach((file) => {
-    const duplicate = selectedFiles.some(
-      (current) => current.name === file.name && current.size === file.size
-    );
-    if (!duplicate) selectedFiles.push(file);
+const hasCandidateSources = () =>
+  selectedFiles.length > 0 || Boolean(resumeText.value.trim());
+
+function sourceStatusIsReady(source) {
+  return source?.status === "ready" || source?.status === "ok";
+}
+
+function sourceMetadata(source) {
+  if (!sourceStatusIsReady(source)) return "Could not read";
+  const parts = [];
+  if (source.pages) {
+    parts.push(`${source.pages} ${source.pages === 1 ? "page" : "pages"}`);
+  }
+  parts.push(`${Number(source.words || 0).toLocaleString()} words`);
+  if (source.truncated) parts.push("truncated");
+  parts.push("View text");
+  return parts.join(" · ");
+}
+
+function renderSourceManifest() {
+  sourceManifestElement.innerHTML = "";
+  sourceManifest.forEach((source) => {
+    const card = document.createElement("details");
+    const warnings = Array.isArray(source.warnings) ? source.warnings : [];
+    const ready = sourceStatusIsReady(source);
+    card.className = `source-card${ready ? (warnings.length ? " warning" : "") : " error"}`;
+
+    const summary = document.createElement("summary");
+    const name = document.createElement("span");
+    name.className = "source-name";
+    name.textContent = source.name || source.filename || "Candidate context";
+    const meta = document.createElement("span");
+    meta.className = "source-meta";
+    meta.textContent = sourceMetadata(source);
+    summary.append(name, meta);
+    card.append(summary);
+
+    if (warnings.length) {
+      const list = document.createElement("ul");
+      list.className = "source-warning-list";
+      warnings.forEach((warning) => {
+        const item = document.createElement("li");
+        item.textContent = warning;
+        list.append(item);
+      });
+      card.append(list);
+    }
+
+    if (Array.isArray(source.detected_sections) && source.detected_sections.length) {
+      const sections = document.createElement("p");
+      sections.className = "source-sections";
+      sections.textContent = `Detected sections: ${source.detected_sections.join(", ")}`;
+      card.append(sections);
+    }
+
+    if (source.text) {
+      const preview = document.createElement("pre");
+      preview.className = "source-preview";
+      preview.textContent = source.text;
+      card.append(preview);
+    }
+    sourceManifestElement.append(card);
   });
+}
+
+function updateSourcePreflightIdle() {
+  sourcePreflight.hidden = !hasCandidateSources();
+  if (sourcePreflight.hidden) return;
+  sourcePreflightTitle.textContent = "Source text needs checking";
+  sourcePreflightCopy.textContent =
+    "Check the exact PDF, DOCX, knowledge-base, and pasted text the agents will receive.";
+  checkSourcesButton.textContent = "Check extracted text";
+  checkSourcesButton.disabled = false;
+}
+
+function invalidateSourceBundle(autoCheck = false) {
+  sourceRevision += 1;
+  sourceBundleId = "";
+  sourceBundleRevision = -1;
+  sourceManifest = [];
+  sourcePreflightController?.abort();
+  sourcePreflightController = null;
+  clearTimeout(sourcePreflightTimer);
   renderFiles();
+  renderSourceManifest();
+  updateSourcePreflightIdle();
+  if (autoCheck && hasCandidateSources()) {
+    sourcePreflightTimer = setTimeout(() => {
+      runSourcePreflight({ quiet: true }).catch(() => {});
+    }, 450);
+  }
+}
+
+function preflightErrorMessage(detail) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item.msg || String(item)).join(" ");
+  }
+  return "The source text could not be checked.";
+}
+
+async function runSourcePreflight({ quiet = false } = {}) {
+  if (!hasCandidateSources()) {
+    throw new Error("Add at least one source document or paste candidate context.");
+  }
+  const requestedRevision = sourceRevision;
+  sourcePreflightController?.abort();
+  const controller = new AbortController();
+  sourcePreflightController = controller;
+  sourcePreflight.hidden = false;
+  sourcePreflightTitle.textContent = "Reading source text…";
+  sourcePreflightCopy.textContent =
+    "Extracting selectable text without using model tokens.";
+  checkSourcesButton.textContent = "Checking…";
+  checkSourcesButton.disabled = true;
+
+  const payload = new FormData();
+  selectedFiles.forEach((file) => payload.append("files", file));
+  if (resumeText.value.trim()) {
+    payload.append("resume_text", resumeText.value.trim());
+  }
+
+  try {
+    const response = await fetch("/api/resume/sources/preflight", {
+      method: "POST",
+      body: payload,
+      signal: controller.signal,
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error("The server returned an unreadable source check.");
+    }
+    if (!response.ok) {
+      throw new Error(preflightErrorMessage(data.detail));
+    }
+    if (requestedRevision !== sourceRevision) return null;
+
+    sourceManifest = Array.isArray(data.sources) ? data.sources : [];
+    sourceBundleId = data.ready ? data.source_bundle_id || "" : "";
+    sourceBundleRevision = data.ready ? sourceRevision : -1;
+    renderFiles();
+    renderSourceManifest();
+
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    if (data.ready && sourceBundleId) {
+      formError.classList.remove("visible");
+      sourcePreflightTitle.textContent = "Source text ready";
+      sourcePreflightCopy.textContent =
+        `${Number(data.total_words || 0).toLocaleString()} words will be sent to the agents` +
+        (warnings.length ? ` · ${warnings.length} extraction warning${warnings.length === 1 ? "" : "s"}` : ".");
+      checkSourcesButton.textContent = "Recheck text";
+      return sourceBundleId;
+    }
+
+    sourcePreflightTitle.textContent = "Fix unreadable source material";
+    sourcePreflightCopy.textContent =
+      warnings[0] || "Open each source below for details before generating.";
+    checkSourcesButton.textContent = "Check again";
+    throw new Error(
+      warnings[0] || "One or more source documents could not be read."
+    );
+  } catch (error) {
+    if (error.name === "AbortError") return null;
+    if (requestedRevision === sourceRevision) {
+      sourceBundleId = "";
+      sourceBundleRevision = -1;
+      if (!sourceManifest.length) {
+        sourcePreflightTitle.textContent = "Source check failed";
+        sourcePreflightCopy.textContent = error.message;
+      }
+      checkSourcesButton.textContent = "Check again";
+    }
+    if (!quiet) throw error;
+    return null;
+  } finally {
+    if (sourcePreflightController === controller) {
+      sourcePreflightController = null;
+      checkSourcesButton.disabled = false;
+    }
+  }
+}
+
+async function ensureSourceBundle() {
+  if (sourceBundleId && sourceBundleRevision === sourceRevision) {
+    return sourceBundleId;
+  }
+  const bundleId = await runSourcePreflight();
+  if (!bundleId) {
+    throw new Error("Source text is not ready for generation.");
+  }
+  return bundleId;
+}
+
+function addFiles(files) {
+  selectedFiles.push(...files);
+  invalidateSourceBundle(true);
 }
 
 fileInput.addEventListener("change", () => {
@@ -300,9 +502,13 @@ dropzone.addEventListener("drop", (event) => addFiles(event.dataTransfer.files))
 
 resumeText.addEventListener("input", () => {
   contextCount.textContent = `${resumeText.value.length.toLocaleString()} / 50,000`;
+  invalidateSourceBundle(false);
 });
 jobDescription.addEventListener("input", () => {
   jdCount.textContent = `${jobDescription.value.length.toLocaleString()} characters`;
+});
+checkSourcesButton.addEventListener("click", () => {
+  runSourcePreflight().catch((error) => showError(error.message));
 });
 
 function resetStages() {
@@ -947,7 +1153,6 @@ function populateResults(data) {
   renderDocumentPreview(
     document.querySelector("#cover-output"),
     data.cover_letter_markdown ||
-      data.warnings?.[0] ||
       "Cover letter was not generated."
   );
   document.querySelector("#jd-analysis").textContent = data.artifacts.jd_analysis;
@@ -975,6 +1180,9 @@ function populateResults(data) {
       ? ["Supported ATS coverage", `${data.scores.supported_ats_coverage}%`]
       : null,
     data.revision_count ? ["Draft passes", data.revision_count] : null,
+    data.source_manifest?.length
+      ? ["Sources checked", data.source_manifest.length]
+      : null,
     data.usage?.total_tokens ? ["Tokens", data.usage.total_tokens.toLocaleString()] : null,
     data.langsmith_enabled ? ["LangSmith", data.langsmith_project] : null,
     data.warnings?.length ? ["Warning", data.warnings[0]] : null,
@@ -1040,19 +1248,29 @@ form.addEventListener("submit", async (event) => {
     }
   }
 
+  generateButton.disabled = true;
+  generateButton.querySelector("span").textContent = "Checking source text…";
+  let bundleId;
+  try {
+    bundleId = await ensureSourceBundle();
+  } catch (error) {
+    showError(error.message);
+    generateButton.disabled = false;
+    generateButton.querySelector("span").textContent = "Generate tailored application";
+    sourcePreflight.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+
   const payload = new FormData();
   payload.append("job_description", jd);
   payload.append("engine", engine);
+  payload.append("source_bundle_id", bundleId);
   if (engine === "langgraph_openrouter") {
     payload.append("model_name", modelName.value.trim());
     payload.append("langsmith_enabled", String(langsmithEnabled.checked));
     payload.append("langsmith_project", langsmithProject.value.trim() || "rolefit-resume-agent");
     payload.append("trace_content", String(traceContent.checked));
   }
-  if (context) payload.append("resume_text", context);
-  selectedFiles.forEach((file) => payload.append("files", file));
-
-  generateButton.disabled = true;
   generateButton.querySelector("span").textContent = "Agents are working…";
   results.hidden = true;
   startProgress();
@@ -1106,7 +1324,7 @@ form.addEventListener("submit", async (event) => {
 clearButton.addEventListener("click", () => {
   selectedFiles = [];
   form.reset();
-  renderFiles();
+  invalidateSourceBundle(false);
   contextCount.textContent = "0 / 50,000";
   jdCount.textContent = "0 characters";
   formError.classList.remove("visible");

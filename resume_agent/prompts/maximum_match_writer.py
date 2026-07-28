@@ -112,6 +112,10 @@ CONSTRAINTS
   two clauses. Prefer action + technical scope + real outcome. When no metric
   exists, show concrete scope or complexity without inventing a number. Split
   task inventories into focused bullets.
+- Return a complete 650-900 word resume and never exceed 950 words. Reserve
+  space for Education before adding lower-priority role or project bullets.
+  During revision, remove repetition instead of omitting Summary, Skills,
+  Experience (or Projects), or Education. Use those exact level-two headings.
 - No tables, columns, graphics, keyword dumps, first-person language, or
   hidden text. For under 10 years, produce one well-filled page using the
   strongest 3-5 roles/projects and always include inventoried education. Do

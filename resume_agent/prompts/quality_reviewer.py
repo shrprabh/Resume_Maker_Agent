@@ -47,7 +47,11 @@ role, length, lead material actually leading, natural keyword integration.
 Also fail craft issues that make a resume look machine-generated: generic
 summary filler, multiple Skills categories collapsed onto one line,
 task-inventory bullets over 45 words, missing inventoried education, or a
-sparse half-page draft that left relevant evidence unused.
+sparse half-page draft that left relevant evidence unused. Require a complete
+650-900 word draft (950 words is the hard ceiling) with exact level-two
+Summary, Skills, Experience or Projects, and Education headings. A revision
+must shorten duplicate or low-relevance bullets before removing any required
+section.
 
 Score 0-100: start at 100; -15 per claimable must-have keyword missing, -10
 per weak/unquantified bullet in a lead role, -10 for an untailored summary,

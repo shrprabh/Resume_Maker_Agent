@@ -26,6 +26,10 @@ body.compact {
   font-size: 9.5pt;
   line-height: 1.25;
 }
+body.dense {
+  font-size: 8.85pt;
+  line-height: 1.18;
+}
 h1 {
   font-size: 20pt;
   line-height: 1.1;
@@ -73,7 +77,7 @@ p {
   widows: 2;
 }
 .document-entry {
-  page-break-inside: avoid;
+  page-break-inside: auto;
 }
 .keep-with-next {
   -pdf-keep-with-next: true;
@@ -83,6 +87,13 @@ body.compact h2 { margin-top: 8pt; margin-bottom: 3.5pt; }
 body.compact h3 { margin-top: 5pt; }
 body.compact p { margin-bottom: 2.5pt; }
 body.compact .resume-bullet { margin-bottom: 2pt; line-height: 1.25; }
+body.dense h1 { font-size: 17.5pt; }
+body.dense h2 { margin-top: 6pt; margin-bottom: 3pt; }
+body.dense h3 { margin-top: 4pt; }
+body.dense p { margin-bottom: 1.8pt; }
+body.dense .contact { margin-bottom: 4pt; font-size: 8.4pt; }
+body.dense .skill-line { margin-bottom: 1.5pt; line-height: 1.18; }
+body.dense .resume-bullet { margin-bottom: 1.5pt; line-height: 1.18; }
 """
 
 
@@ -185,13 +196,8 @@ def _decorate_resume_html(body: str) -> str:
     def convert_list(match: re.Match) -> str:
         items = re.findall(r"<li>(.*?)</li>", match.group(1), flags=re.DOTALL)
         return "\n".join(
-            (
-                '<p class="resume-bullet keep-with-next">'
-                f'-&nbsp;{item.strip()}</p>'
-                if index < len(items) - 1
-                else f'<p class="resume-bullet">-&nbsp;{item.strip()}</p>'
-            )
-            for index, item in enumerate(items)
+            f'<p class="resume-bullet">-&nbsp;{item.strip()}</p>'
+            for item in items
         )
 
     body = re.sub(
@@ -217,9 +223,9 @@ def _decorate_resume_html(body: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
 
-    # Keep each role/project heading with all of its bullets when it fits on
-    # one page. Without this wrapper, xhtml2pdf may leave a heading and one
-    # bullet at the bottom while continuing the same job on the next page.
+    # Group role/project markup semantically. The h3 rule keeps the heading
+    # with its first bullet, while the role itself remains page-breakable so a
+    # long entry does not create a large blank area or an unnecessary page.
     return re.sub(
         r"(<h3>.*?</h3>.*?)(?=<h3>|<h2>|\Z)",
         r'<div class="document-entry">\1</div>',
@@ -233,11 +239,12 @@ def markdown_to_html(markdown_text: str) -> str:
     body = md_lib.markdown(normalized, extensions=["sane_lists"])
     body = _decorate_resume_html(body)
     word_count = len(re.findall(r"\b[\w+#./-]+\b", normalized))
-    density = (
-        "compact"
-        if len(normalized) > 6_500 or word_count > 750
-        else "standard"
-    )
+    if len(normalized) > 7_200 or word_count > 850:
+        density = "dense"
+    elif len(normalized) > 6_500 or word_count > 750:
+        density = "compact"
+    else:
+        density = "standard"
     return (
         f"<html><head><style>{_CSS}</style></head>"
         f'<body class="{density}">{body}</body></html>'

@@ -106,6 +106,11 @@ CONSTRAINTS
   more than two clauses. Prefer action + technical scope + real outcome. When
   the inventory has no metric, describe concrete scope or complexity; never
   invent a number. Split laundry-list bullets instead of chaining many tasks.
+- LENGTH CONTRACT: return a complete 650-900 word resume and never exceed 950
+  words. Reserve space for Education before expanding older roles. On a
+  revision pass, remove duplicate or lower-relevance bullets instead of
+  dropping a required section. The final output must still contain the exact
+  level-two headings Summary, Skills, Experience (or Projects), and Education.
 - For under 10 years, produce one well-filled page using the strongest 3-5
   roles/projects. Do not shrink a rich inventory into half a page merely to
   be brief. Two pages maximum otherwise.

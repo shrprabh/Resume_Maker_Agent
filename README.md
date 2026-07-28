@@ -79,7 +79,12 @@ uvicorn app.main:app --reload --port 8080
 Open **http://127.0.0.1:8080** for the integrated frontend. It supports
 drag-and-drop multi-document uploads, pasted candidate context, live pipeline
 progress, resume and cover-letter review tabs, agent insights, and direct PDF
-downloads. The results also include an on-demand **Maximum Verified Match**
+downloads. Before model tokens are spent, a source preflight shows the exact
+normalized text read from each PDF, DOCX, TXT, Markdown knowledge file, and
+pasted note, including detected sections, page/word counts, truncation, and
+OCR warnings. Generation reuses that exact reviewed text through a one-hour
+opaque source bundle. A request accepts up to 20 files and 15 MB per source.
+The results also include an on-demand **Maximum Verified Match**
 tab with separate supported-keyword coverage, overall requirement match, and
 evidence-integrity scores. The engine selector keeps Google ADK as the default or reveals
 OpenRouter model/key and LangSmith tracing controls. Provider keys are sent in
@@ -135,6 +140,7 @@ check, and never embeds local `.env` files in the image.
 The existing endpoint remains backward-compatible:
 
 ```text
+POST /api/resume/sources/preflight
 POST /api/resume/generate
 X-OpenRouter-Api-Key: <key>       # LangGraph engine only
 X-LangSmith-Api-Key: <key>        # only when tracing is enabled
@@ -144,6 +150,7 @@ model_name=<openrouter model slug>
 langsmith_enabled=false
 langsmith_project=rolefit-resume-agent
 trace_content=false
+source_bundle_id=<id returned by source preflight>
 
 # returned by the generate response; valid for one hour in the local server
 POST /api/resume/maximum-match/<session_id>
@@ -228,10 +235,17 @@ ATS result.
 
 Before any model call, candidate sources that strongly resemble a second job
 description are rejected so hiring requirements cannot be mistaken for
-candidate evidence. Before any PDF is created, a deterministic document gate
-rejects fragments, missing Summary/Skills/Experience/Education sections, fewer
-than four achievement bullets, drafts over 950 words, and unfocused Skills
-sections. Model outputs with more than five valid Skills categories are
+candidate evidence. PDF pages retain boundaries, DOCX table content is read
+in document order, and aggregate limits use visible fair head-and-tail
+allocation instead of silently cutting off a later Education section.
+Before any PDF is created, a deterministic publication pass canonicalizes
+Education headings, restores missing Education verbatim from the verified
+candidate profile, and removes only complete low-priority bullets when a
+draft exceeds the 900-word publication target. Already placed,
+evidence-supported ATS terms are protected. The final document gate still
+rejects true fragments, missing required sections with no verified source,
+fewer than four achievement bullets, drafts over 950 words after safe repair,
+and unfocused Skills sections. Model outputs with more than five valid Skills categories are
 losslessly consolidated into five professional ATS-safe rows before scoring
 and PDF rendering. OpenRouter
 reasoning is disabled for document-writing calls so hidden reasoning tokens
@@ -239,7 +253,8 @@ cannot truncate the visible resume. Experience blocks are normalized into
 reverse chronological order without changing their text.
 
 PDF downloads use an ATS-safe single-column layout, readable density-aware
-type, hanging-indented hyphen bullets, unsplit role/project blocks, and
+type, hanging-indented hyphen bullets, headings kept with their first bullet,
+and page-breakable long role blocks that avoid large blank areas. Downloads use
 descriptive filenames:
 `Company_Name_Candidate_Name_Resume.pdf` and
 `Company_Name_Candidate_Name_Cover_Letter.pdf`. The optional variant uses
@@ -262,10 +277,12 @@ app/                 FastAPI layer
   services/langgraph_runner.py LangGraph state, parallel agents, review loop,
                                maximum-match branch, OpenRouter model, and
                                LangSmith tracing
+  services/resume_repair.py    grounded Education restoration + whole-bullet
+                               publication compaction
   services/resume_scoring.py   deterministic coverage + validated reviews
-  services/text_extraction.py  PDF/DOCX/TXT/MD → text (pypdf / python-docx)
+  services/text_extraction.py  structured PDF/DOCX/TXT/MD text + metadata
   services/pdf_renderer.py     Markdown → HTML → PDF (xhtml2pdf, pure Python)
-  routers/resume.py            /api/resume/{generate, download, health}
+  routers/resume.py            source preflight, generate, download, health
   routers/providers.py         OpenRouter catalog and credential validation
 samples/             sample resume + knowledge library + JD for testing
                      (the JD demands Kubernetes, which no candidate document

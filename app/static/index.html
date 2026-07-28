@@ -161,6 +161,16 @@
             <span>or click to browse your resume, projects, and knowledge library</span>
           </label>
           <div class="file-list" id="file-list" aria-live="polite"></div>
+          <section class="source-preflight" id="source-preflight" hidden aria-live="polite">
+            <div class="source-preflight-heading">
+              <div>
+                <strong id="source-preflight-title">Source text needs checking</strong>
+                <small id="source-preflight-copy">We will show the exact text the agents can read before generation.</small>
+              </div>
+              <button type="button" id="check-sources">Check extracted text</button>
+            </div>
+            <div class="source-manifest" id="source-manifest"></div>
+          </section>
         </div>
 
         <div class="divider"><span>or add context manually</span></div>

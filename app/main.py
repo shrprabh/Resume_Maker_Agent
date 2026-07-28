@@ -31,7 +31,7 @@ app = FastAPI(
         "Dual-engine agent pipeline for authentic and maximum-verified-match "
         "resumes plus cover letters."
     ),
-    version="0.2.0",
+    version="0.3.0",
 )
 app.include_router(resume.router)
 app.include_router(providers.router)

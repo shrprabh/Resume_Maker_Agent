@@ -74,6 +74,48 @@ C#, React
 - Supported CI/CD releases.
 """
 
+MAXIMUM_ENDPOINT_RESUME = """\
+# Candidate
+candidate@example.com | Austin, TX
+
+## Summary
+Full-stack software engineer delivering maintainable C# services, responsive
+React interfaces, reliable deployment workflows, and clearly documented
+application changes. Brings hands-on testing, production support, iterative
+delivery, and cross-functional collaboration experience grounded in real
+projects and work across modern business application environments.
+
+## Skills
+**Languages:** C#, JavaScript, TypeScript
+**Frameworks & Libraries:** React, ASP.NET Core
+**Tools, Practices & Domains:** CI/CD, Git, automated testing
+
+## Experience
+### Software Engineer — Example Company | Austin, TX | 2024 – Present
+
+- Built responsive React interfaces backed by maintainable C# services,
+  translating assigned requirements into tested application changes for
+  recurring operational workflows used by internal business teams.
+- Supported CI/CD releases through focused validation, implementation review,
+  deployment documentation, and coordinated troubleshooting that helped the
+  engineering team deliver reliable changes across iterative release cycles.
+- Designed clear service interfaces and validation behavior, documented
+  technical decisions, and partnered with engineers to keep frontend and
+  backend contracts predictable as application features evolved.
+- Investigated application defects by reproducing failure paths, reviewing
+  logs and data assumptions, testing verified corrections, and documenting
+  findings so similar production issues could be diagnosed efficiently.
+- Planned incremental work with product and engineering partners, reviewed
+  implementation tradeoffs, and communicated delivery status while preserving
+  maintainable scope, test coverage, and practical release readiness.
+- Authored practical technical notes for recurring support scenarios, clarified
+  verification steps with teammates, and kept implementation details aligned
+  with the application behavior confirmed during testing and release review.
+
+## Education
+Bachelor of Science in Computer Science — Example University
+"""
+
 
 class ResumeScoringTests(unittest.TestCase):
     def test_extracts_paired_keywords_without_merging_them(self):
@@ -466,7 +508,7 @@ class MaximumMatchEndpointTests(unittest.TestCase):
     def _result():
         return {
             "approved": True,
-            "resume_markdown": RESUME,
+            "resume_markdown": MAXIMUM_ENDPOINT_RESUME,
             "review_feedback": (
                 "APPROVED — score 94/100, ATS coverage 100%, Fabrications: 0."
             ),
@@ -657,6 +699,76 @@ class MaximumMatchEndpointTests(unittest.TestCase):
 
 
 class ResumeGenerationQualityGateTests(unittest.TestCase):
+    @patch("app.routers.resume.pdf_renderer.render_pdf")
+    @patch(
+        "app.routers.resume.adk_runner.run_pipeline",
+        new_callable=AsyncMock,
+    )
+    def test_missing_education_and_overlong_draft_are_repaired_before_pdf(
+        self, run_pipeline, render_pdf
+    ):
+        draft = MAXIMUM_ENDPOINT_RESUME.split("## Education", 1)[0].rstrip()
+        draft += "\n" + "\n".join(
+            (
+                "- Supported cross-functional delivery planning, documented "
+                "technical decisions, validated implementation behavior, "
+                "coordinated release readiness, and clarified recurring "
+                f"operational workflows for delivery cycle {index}."
+            )
+            for index in range(1, 35)
+        )
+        self.assertGreater(audit_resume_structure(draft).word_count, 950)
+        run_pipeline.return_value = {
+            "session_id": "publicationrepair123",
+            "approved": True,
+            "resume_markdown": draft,
+            "cover_letter_markdown": "",
+            "cover_letter_error": "",
+            "jd_analysis": JD_ANALYSIS,
+            "candidate_profile": (
+                "## Contact\nCandidate\n\n"
+                "## Education & Certifications\n"
+                "Bachelor of Science in Computer Science — Example University\n"
+            ),
+            "match_strategy": MATCH_STRATEGY,
+            "review_feedback": (
+                '{"score":94,"ats_coverage":100,"fabrication_count":0,'
+                '"approved":true,"feedback":[]}'
+            ),
+            "review_score": 94,
+            "ats_coverage": 100,
+            "review_valid": True,
+            "revision_count": 3,
+            "usage": {},
+            "engine": "google_adk",
+            "model_name": "gemini-test",
+            "langsmith_enabled": False,
+            "langsmith_project": None,
+            "trace_content": False,
+        }
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/resume/generate",
+                data={
+                    "job_description": "Build a C# and React application.",
+                    "resume_text": "Candidate source material.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIn(
+            "## Education\nBachelor of Science in Computer Science",
+            payload["resume_markdown"],
+        )
+        self.assertLessEqual(payload["scores"]["word_count"], 950)
+        self.assertTrue(payload["scores"]["structure_valid"])
+        self.assertTrue(
+            any("Education section" in warning for warning in payload["warnings"])
+        )
+        render_pdf.assert_called_once()
+
     @patch("app.routers.resume.pdf_renderer.render_pdf")
     @patch(
         "app.routers.resume.adk_runner.run_pipeline",

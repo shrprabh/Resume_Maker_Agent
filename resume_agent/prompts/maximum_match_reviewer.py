@@ -42,7 +42,9 @@ Craft requires a specific 45-65 word summary, one Skills category per line,
 focused bullets normally under 36 words, inventoried education, and enough
 relevant evidence to form a well-filled page. Flag generic filler, run-on
 skills, task-list bullets, missing education, and unnecessary half-page
-compression.
+compression. Require a complete 650-900 word draft (950 words is the hard
+ceiling) with exact level-two Summary, Skills, Experience or Projects, and
+Education headings.
 
 Any unsupported or inflated claim caps the score at 40.
 

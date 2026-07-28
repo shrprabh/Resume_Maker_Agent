@@ -53,6 +53,7 @@ class PdfRendererTests(unittest.TestCase):
         self.assertEqual(html.count('class="skill-line"'), 3)
         self.assertIn('class="document-entry"', html)
         self.assertIn('class="resume-bullet">-&nbsp;', html)
+        self.assertNotIn("resume-bullet keep-with-next", html)
         self.assertIn("<p>AWS Certified Example</p>", html)
         self.assertIn("<p>Azure Certified Example</p>", html)
         self.assertNotIn("<ul>", html)
@@ -67,6 +68,13 @@ class PdfRendererTests(unittest.TestCase):
         self.assertIn("- Built React interfaces", text)
         self.assertIn("Languages: C#, TypeScript", text)
         self.assertIn("Education", text)
+
+    def test_long_resume_uses_dense_page_breakable_layout(self):
+        long_resume = SAMPLE_RESUME + "\n" + ("delivery evidence " * 430)
+        html = markdown_to_html(long_resume)
+        self.assertIn('<body class="dense">', html)
+        self.assertIn('class="document-entry"', html)
+        self.assertNotIn("resume-bullet keep-with-next", html)
 
 
 if __name__ == "__main__":
