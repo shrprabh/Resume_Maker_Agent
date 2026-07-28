@@ -1163,7 +1163,7 @@ function populateResults(data) {
     ? "The quality agent approved this evidence-grounded draft."
     : data.review_valid
       ? "The draft reached its review limit. Please inspect the feedback before applying."
-      : "The draft was preserved, but the reviewer score was unavailable—not zero.";
+      : "The resume passed deterministic document checks and was preserved. The model review could not be verified; inspect the audit details before applying.";
   document.querySelector("#resume-download").href = data.resume_pdf_url;
   document.querySelector("#resume-download").download = data.resume_filename;
   document.querySelector("#cover-download").href = data.cover_letter_pdf_url;
@@ -1174,7 +1174,7 @@ function populateResults(data) {
     ["Model", data.model_name],
     data.review_valid && data.review_score !== null && data.review_score !== undefined
       ? ["Review", `${data.review_score}/100`]
-      : ["Review", "Unavailable"],
+      : ["Model review", "Not verified"],
     data.scores?.supported_ats_coverage !== null &&
       data.scores?.supported_ats_coverage !== undefined
       ? ["Supported ATS coverage", `${data.scores.supported_ats_coverage}%`]

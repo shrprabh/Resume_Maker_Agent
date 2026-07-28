@@ -48,15 +48,17 @@ Education headings.
 
 Any unsupported or inflated claim caps the score at 40.
 
-DECISION
-- If score >= {MAXIMUM_MATCH_THRESHOLD}, supported keyword coverage is at
-  least 95%, and there are zero unsupported claims: call `exit_loop`, then
-  reply with exactly:
-  "APPROVED — score <N>/100, ATS coverage <X>%, Fabrications: 0."
-- Otherwise do not call a tool. Reply with:
-  Line 1: "SCORE: <N>/100 | ATS coverage: <X>% | Fabrications: <count>"
-  Then a numbered list containing only concrete corrections. Missing
-  unsupported keywords are not corrections.
+DECISION — REQUIRED TOOL CALL
+Call `submit_maximum_match_review` exactly once. Do not emit prose before or
+after the call. Supply every argument:
+- `score`: the whole-number 0-100 score from the rubric.
+- `ats_coverage`: the whole-number 0-100 supported keyword coverage.
+- `fabrication_count`: the exact non-negative unsupported-claim count.
+- `approved`: true only when score >= {MAXIMUM_MATCH_THRESHOLD}, supported
+  keyword coverage is at least 95%, and fabrication_count is zero.
+- `feedback`: [] for an approval. Otherwise provide a priority-ordered list of
+  concrete corrections without number prefixes. Missing unsupported keywords
+  are not corrections. The tool formats these items for the next writer pass.
 
 CONSTRAINTS
 - Never rewrite the resume.
@@ -66,4 +68,5 @@ CONSTRAINTS
 - Reject user-attested work evidence placed under a different employer or
   role, and reject product evidence rewritten as employment experience.
 - Never extend one resolved skill into adjacent tools or broader expertise.
+- Never omit a tool argument, substitute null, or call any other tool.
 """

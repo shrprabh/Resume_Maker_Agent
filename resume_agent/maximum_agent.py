@@ -6,9 +6,10 @@ pipeline remains unchanged.
 """
 
 from google.adk.agents import LlmAgent, LoopAgent
+from google.genai import types
 
 from . import config, prompts
-from .tools import exit_loop
+from .tools import submit_maximum_match_review
 
 
 maximum_match_writer = LlmAgent(
@@ -30,8 +31,15 @@ maximum_match_reviewer = LlmAgent(
         "keyword placement."
     ),
     instruction=prompts.MAXIMUM_MATCH_REVIEWER_INSTRUCTION,
-    tools=[exit_loop],
-    output_key=config.STATE_MAXIMUM_MATCH_FEEDBACK,
+    tools=[submit_maximum_match_review],
+    generate_content_config=types.GenerateContentConfig(
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.ANY,
+                allowed_function_names=["submit_maximum_match_review"],
+            )
+        )
+    ),
 )
 
 maximum_match_root_agent = LoopAgent(

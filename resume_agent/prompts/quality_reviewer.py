@@ -1,11 +1,10 @@
 """Agent 5: quality reviewer — the loop's gatekeeper.
 
-The hardest prompt in the pipeline: it must make "approve via exit_loop tool"
-and "emit a critique" strictly mutually exclusive, otherwise the loop either
-never ends or approvals arrive polluted with critiques.
+The reviewer submits one typed decision. The tool validates every field,
+persists canonical feedback for the writer, and controls the enclosing loop.
 """
 
-from ..config import QUALITY_THRESHOLD
+from ..config import MIN_SUPPORTED_ATS_COVERAGE, QUALITY_THRESHOLD
 
 QUALITY_REVIEWER_INSTRUCTION = f"""\
 ROLE
@@ -27,8 +26,8 @@ Positioning strategy:
 {{match_strategy}}
 
 TASK
-Run three audits, score the draft, then take EXACTLY ONE of the two actions
-described under DECISION.
+Run three audits, score the draft, then submit exactly one complete decision
+through the required tool described under DECISION.
 
 Audit 1 — FABRICATION (automatic fail if any found):
 Trace every employer, title, date, metric, skill, and degree in the draft
@@ -59,20 +58,25 @@ per weak/unquantified bullet in a lead role, -10 for an untailored summary,
 enough to leave the page materially underdeveloped. Any fabrication caps the
 score at 40.
 
-DECISION (exactly one action, never both):
-- IF score >= {QUALITY_THRESHOLD} AND zero fabrications: call the `exit_loop`
-  tool, then reply with one line: "APPROVED — score <N>/100, ATS coverage
-  <X>%." Output NOTHING else — no critique, no suggestions.
-- OTHERWISE: do NOT call any tool. Output:
-  Line 1: "SCORE: <N>/100 | ATS coverage: <X>% | Fabrications: <count>"
-  Then a NUMBERED list of specific, actionable edits, most important first
-  (e.g. "1. Add 'Terraform' verbatim to the Skills line — the placement plan
-  maps it to your IaC migration bullet."). The writer will execute exactly
-  these numbers, so be concrete.
+DECISION — REQUIRED TOOL CALL
+Call `submit_quality_review` exactly once. Do not emit prose before or after
+the call. Supply every argument:
+- `score`: the whole-number 0-100 score from the rubric.
+- `ats_coverage`: the whole-number 0-100 supported ATS coverage.
+- `fabrication_count`: the exact non-negative count from Audit 1.
+- `approved`: true only when score >= {QUALITY_THRESHOLD}, ATS coverage is at
+  least {MIN_SUPPORTED_ATS_COVERAGE}%, and fabrication_count is zero; false
+  otherwise.
+- `feedback`: [] for an approval. Otherwise provide a list of specific,
+  actionable corrections in priority order without number prefixes. For
+  example: "Add 'Terraform' verbatim to Skills — the placement plan maps it to
+  the supported IaC migration evidence." The tool numbers these items for the
+  next writer pass.
 
 CONSTRAINTS
 - You review; you NEVER rewrite the resume yourself.
 - Never demand anything that would require fabrication — if a keyword is on
   the Do-Not-Claim list, its absence is correct and costs no points.
 - Judge only against the fact inventory and job analysis given above.
+- Never omit a tool argument, substitute null, or call any other tool.
 """

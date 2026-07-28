@@ -37,6 +37,23 @@ _maximum_match_runner = Runner(
 )
 
 
+def _unverified_review_note(scorecard) -> str:
+    coverage = scorecard.supported_ats_coverage
+    coverage_text = f"{coverage}%" if coverage is not None else "not measurable"
+    if scorecard.structure_valid:
+        structure_text = "document structure passed"
+    else:
+        issues = "; ".join(scorecard.structure_issues[:3])
+        structure_text = f"document structure needs attention ({issues})"
+    return (
+        "MODEL REVIEW NOT VERIFIED — Google ADK did not commit a complete "
+        "typed decision, so the draft was preserved without inventing a "
+        "quality or fabrication score. Deterministic checks: supported ATS "
+        f"coverage {coverage_text}; {structure_text}. Inspect the evidence "
+        "audit before using the resume."
+    )
+
+
 async def run_pipeline(job_description: str, candidate_text: str) -> dict:
     session_id = uuid.uuid4().hex
 
@@ -61,14 +78,24 @@ async def run_pipeline(job_description: str, candidate_text: str) -> dict:
         parts=[types.Part(text="Generate the tailored resume and cover letter now.")],
     )
 
-    approved = False
+    tool_approved = False
+    revision_count = 0
     async for event in _runner.run_async(
         user_id=USER_ID, session_id=session_id, new_message=trigger
     ):
-        # The reviewer approving == it called the exit_loop tool.
-        for call in event.get_function_calls():
-            if call.name == "exit_loop":
-                approved = True
+        # The typed review tool is the single source of truth. Count only its
+        # successfully committed state update, not an attempted/invalid call.
+        if (
+            event.author == "quality_reviewer"
+            and config.STATE_REVIEW_FEEDBACK
+            in event.actions.state_delta
+        ):
+            revision_count += 1
+        if (
+            event.author == "quality_reviewer"
+            and event.actions.escalate is True
+        ):
+            tool_approved = True
 
     # Read results from session state — NOT from the last event. After the
     # loop, the final event text is the reviewer's verdict (or the cover
@@ -82,9 +109,8 @@ async def run_pipeline(job_description: str, candidate_text: str) -> dict:
             state.get(config.STATE_DRAFT_RESUME, "")
         )
     )
-    reviewer = parse_reviewer_decision(
-        state.get(config.STATE_REVIEW_FEEDBACK, "")
-    )
+    review_feedback = state.get(config.STATE_REVIEW_FEEDBACK, "")
+    reviewer = parse_reviewer_decision(review_feedback)
     scorecard = build_scorecard(
         resume_markdown=draft_resume,
         jd_analysis=state.get(config.STATE_JD_ANALYSIS, ""),
@@ -93,8 +119,9 @@ async def run_pipeline(job_description: str, candidate_text: str) -> dict:
     )
     coverage = scorecard.supported_ats_coverage
     approved = (
-        approved
+        tool_approved
         and reviewer is not None
+        and reviewer.approved
         and reviewer.fabrication_count == 0
         and scorecard.structure_valid
         and (
@@ -106,8 +133,9 @@ async def run_pipeline(job_description: str, candidate_text: str) -> dict:
             or coverage >= config.MIN_SUPPORTED_ATS_COVERAGE
         )
     )
-    review_feedback = state.get(config.STATE_REVIEW_FEEDBACK, "")
-    if not approved and reviewer is not None:
+    if reviewer is None:
+        review_feedback = _unverified_review_note(scorecard)
+    elif not approved:
         gate_issues = list(scorecard.structure_issues)
         if (
             coverage is not None
@@ -140,7 +168,7 @@ async def run_pipeline(job_description: str, candidate_text: str) -> dict:
         "review_score": scorecard.quality_score,
         "ats_coverage": coverage,
         "review_valid": reviewer is not None,
-        "revision_count": None,
+        "revision_count": revision_count,
         "usage": {},
         "engine": "google_adk",
         "model_name": config.MODEL,
@@ -179,14 +207,23 @@ async def run_maximum_match(
     )
 
     tool_approved = False
+    revision_count = 0
     async for event in _maximum_match_runner.run_async(
         user_id=USER_ID,
         session_id=session_id,
         new_message=trigger,
     ):
-        for call in event.get_function_calls():
-            if call.name == "exit_loop":
-                tool_approved = True
+        if (
+            event.author == "maximum_match_reviewer"
+            and config.STATE_MAXIMUM_MATCH_FEEDBACK
+            in event.actions.state_delta
+        ):
+            revision_count += 1
+        if (
+            event.author == "maximum_match_reviewer"
+            and event.actions.escalate is True
+        ):
+            tool_approved = True
 
     session = await _session_service.get_session(
         app_name=config.APP_NAME,
@@ -210,6 +247,7 @@ async def run_maximum_match(
     approved = (
         tool_approved
         and reviewer is not None
+        and reviewer.approved
         and reviewer.fabrication_count == 0
         and scorecard.structure_valid
         and (
@@ -221,7 +259,9 @@ async def run_maximum_match(
             or scorecard.supported_ats_coverage >= 95
         )
     )
-    if not approved and reviewer is not None:
+    if reviewer is None:
+        review_feedback = _unverified_review_note(scorecard)
+    elif not approved:
         gate_issues = list(scorecard.structure_issues)
         if (
             scorecard.supported_ats_coverage is not None
@@ -251,7 +291,7 @@ async def run_maximum_match(
             match_strategy,
             review_feedback,
         ),
-        "revision_count": None,
+        "revision_count": revision_count,
         "usage": {},
         "engine": "google_adk",
         "model_name": config.MODEL,

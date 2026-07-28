@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -542,53 +543,408 @@ def _requirement_match(
     return round((supported / len(items)) * 100)
 
 
-def parse_reviewer_decision(text: str) -> ReviewerDecision | None:
-    """Parse either the LangGraph JSON contract or the ADK verdict format."""
-    cleaned = (text or "").strip()
-    if not cleaned:
-        return None
+_REVIEW_FIELD_ALIASES = {
+    "score": {
+        "score",
+        "reviewscore",
+        "qualityscore",
+        "overallscore",
+    },
+    "ats_coverage": {
+        "atscoverage",
+        "supportedatscoverage",
+    },
+    "fabrication_count": {
+        "fabricationcount",
+        "fabrications",
+        "unsupportedclaimcount",
+        "unsupportedclaimscount",
+    },
+    "approved": {
+        "approved",
+        "isapproved",
+        "verdict",
+    },
+    "feedback": {
+        "feedback",
+        "issues",
+        "corrections",
+        "recommendations",
+    },
+}
 
-    json_text = re.sub(
-        r"^```(?:json)?\s*|\s*```$",
+
+def _canonical_review_key(value: Any) -> str:
+    return re.sub(
+        r"[^a-z0-9]+",
         "",
-        cleaned,
-        flags=re.IGNORECASE,
+        unicodedata.normalize("NFKC", str(value)).casefold(),
     )
-    candidates = [json_text]
-    embedded = re.search(r"\{.*\}", json_text, flags=re.DOTALL)
-    if embedded and embedded.group(0) != json_text:
-        candidates.append(embedded.group(0))
-    for candidate in candidates:
-        try:
-            return ReviewerDecision.model_validate(json.loads(candidate))
-        except (json.JSONDecodeError, ValidationError, TypeError):
-            pass
 
-    score_match = re.search(r"(?:SCORE:|score)\s*(\d{1,3})\s*/\s*100", cleaned, re.I)
-    coverage_match = re.search(
-        r"ATS\s+coverage:?\s*(\d{1,3})\s*%", cleaned, re.I
-    )
-    fabrication_match = re.search(
-        r"Fabrications?:?\s*(\d+)", cleaned, re.I
-    )
-    if not score_match or not coverage_match:
+
+def _parse_percentage(value: Any) -> int | None:
+    """Accept an explicit integer, percent, or ``N/100`` score only."""
+    if isinstance(value, bool):
         return None
-    feedback = [
-        match.group(1).strip()
-        for match in re.finditer(r"^\s*\d+[.)]\s+(.+)$", cleaned, re.MULTILINE)
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        parsed = int(value)
+    elif isinstance(value, str):
+        normalized = unicodedata.normalize("NFKC", value).strip()
+        match = re.fullmatch(
+            r"(\d{1,3})(?:\.0+)?\s*(?:%|/\s*100)?\s*[.!]?",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        parsed = int(match.group(1))
+    else:
+        return None
+    return parsed if 0 <= parsed <= 100 else None
+
+
+def _parse_nonnegative_integer(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        parsed = int(value)
+    elif isinstance(value, str):
+        normalized = unicodedata.normalize("NFKC", value).strip()
+        match = re.fullmatch(r"(\d+)\s*[.!]?", normalized)
+        if not match:
+            return None
+        parsed = int(match.group(1))
+    else:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _parse_approval(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        return None
+    normalized = canonical_markdown_heading(
+        unicodedata.normalize("NFKC", value)
+    )
+    if normalized in {"true", "yes", "approved", "approve", "pass", "passed"}:
+        return True
+    if normalized in {
+        "false",
+        "no",
+        "not approved",
+        "reject",
+        "rejected",
+        "revise",
+        "revision required",
+        "fail",
+        "failed",
+    }:
+        return False
+    return None
+
+
+def _parse_feedback(value: Any) -> list[str] | None:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if not isinstance(value, (list, tuple)):
+        return None
+    feedback: list[str] = []
+    for item in value:
+        if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+            return None
+        cleaned = str(item).strip()
+        if cleaned:
+            feedback.append(cleaned)
+    return feedback
+
+
+def _matching_alias_values(
+    payload: dict[str, Any],
+    field_name: str,
+) -> list[Any]:
+    aliases = _REVIEW_FIELD_ALIASES[field_name]
+    return [
+        value
+        for key, value in payload.items()
+        if _canonical_review_key(key) in aliases
     ]
-    approved = cleaned.casefold().startswith("approved")
-    fabrications = int(fabrication_match.group(1)) if fabrication_match else 0
+
+
+def _one_unambiguous_value(
+    values: list[Any],
+    parser: Any,
+) -> Any | None:
+    if not values:
+        return None
+    parsed_values = [parser(value) for value in values]
+    if any(value is None for value in parsed_values):
+        return None
+    first = parsed_values[0]
+    return first if all(value == first for value in parsed_values) else None
+
+
+def _decision_from_mapping(payload: dict[str, Any]) -> ReviewerDecision | None:
+    """Normalize a JSON-shaped decision without filling omitted audit fields."""
+    score = _one_unambiguous_value(
+        _matching_alias_values(payload, "score"),
+        _parse_percentage,
+    )
+    coverage = _one_unambiguous_value(
+        _matching_alias_values(payload, "ats_coverage"),
+        _parse_percentage,
+    )
+    fabrications = _one_unambiguous_value(
+        _matching_alias_values(payload, "fabrication_count"),
+        _parse_nonnegative_integer,
+    )
+    approved = _one_unambiguous_value(
+        _matching_alias_values(payload, "approved"),
+        _parse_approval,
+    )
+    if any(
+        value is None
+        for value in (score, coverage, fabrications, approved)
+    ):
+        return None
+
+    feedback_values = _matching_alias_values(payload, "feedback")
+    if feedback_values:
+        feedback = _one_unambiguous_value(feedback_values, _parse_feedback)
+        if feedback is None:
+            return None
+    else:
+        feedback = []
+
+    # An affirmative verdict alongside an explicit fabrication is internally
+    # contradictory. Preserve neither rather than guessing which field is true.
+    if approved and fabrications:
+        return None
     try:
         return ReviewerDecision(
-            score=int(score_match.group(1)),
-            ats_coverage=int(coverage_match.group(1)),
+            score=score,
+            ats_coverage=coverage,
             fabrication_count=fabrications,
-            approved=approved and fabrications == 0,
+            approved=approved,
             feedback=feedback,
         )
     except ValidationError:
         return None
+
+
+def _balanced_json_objects(text: str) -> list[str]:
+    """Return top-level brace blocks while respecting JSON string escapes."""
+    blocks: list[str] = []
+    start: int | None = None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, character in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"' and depth:
+            in_string = True
+        elif character == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif character == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                blocks.append(text[start : index + 1])
+                start = None
+    return blocks
+
+
+def _json_review_candidates(text: str) -> list[dict[str, Any]]:
+    serialized: list[str] = [text]
+    serialized.extend(
+        match.group(1)
+        for match in re.finditer(
+            r"```(?:json)?[ \t]*\r?\n?(.*?)```",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+    serialized.extend(_balanced_json_objects(text))
+
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in serialized:
+        try:
+            parsed = json.loads(candidate.strip())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        fingerprint = json.dumps(
+            parsed,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        if fingerprint not in seen:
+            candidates.append(parsed)
+            seen.add(fingerprint)
+    return candidates
+
+
+def _labeled_prose_values(
+    text: str,
+    label: str,
+    *,
+    require_symbol_separator: bool = False,
+) -> list[str]:
+    """Read labels only at a line/delimiter boundary, including Markdown."""
+    plain = re.sub(r"(?:\*\*|__|`)", "", text)
+    boundary = r"(?:^|[\n|,;]|APPROVED\s*[—–-]\s*)"
+    separator = (
+        r"[ \t]*[:=|][ \t]*"
+        if require_symbol_separator
+        else r"(?:[ \t]*[:=|][ \t]*|[ \t]+)"
+    )
+    pattern = (
+        rf"{boundary}[ \t]*(?:[-+*]\s*)?"
+        rf"(?:{label}){separator}([^|\n,;]+)"
+    )
+    return [
+        match.group(1).strip()
+        for match in re.finditer(
+            pattern,
+            plain,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    ]
+
+
+def _decision_from_prose(text: str) -> ReviewerDecision | None:
+    score = _one_unambiguous_value(
+        _labeled_prose_values(
+            text,
+            r"(?:overall\s+|quality\s+|review\s+)?score",
+        ),
+        _parse_percentage,
+    )
+    coverage = _one_unambiguous_value(
+        _labeled_prose_values(
+            text,
+            r"(?:supported\s+)?ATS\s+coverage",
+        ),
+        _parse_percentage,
+    )
+    fabrications = _one_unambiguous_value(
+        _labeled_prose_values(
+            text,
+            r"(?:fabrication(?:\s+count)?|fabrications|"
+            r"unsupported\s+claim\s+count)",
+        ),
+        _parse_nonnegative_integer,
+    )
+
+    plain = re.sub(r"(?:\*\*|__|`)", "", text).strip()
+    approval_values = _labeled_prose_values(
+        text,
+        r"(?:approved|verdict)",
+        require_symbol_separator=True,
+    )
+    if approval_values:
+        approved = _one_unambiguous_value(approval_values, _parse_approval)
+    elif re.match(r"^APPROVED\b", plain, flags=re.IGNORECASE):
+        approved = True
+    elif re.match(
+        r"^(?:NOT\s+APPROVED|REJECTED|REVISION\s+REQUIRED)\b",
+        plain,
+        flags=re.IGNORECASE,
+    ):
+        approved = False
+    elif re.match(
+        r"^(?:[-+*]\s*)?SCORE\s*:",
+        plain,
+        flags=re.IGNORECASE,
+    ):
+        # This is the reviewer's specified non-approval verdict form, not an
+        # inference from the numeric score.
+        approved = False
+    else:
+        approved = None
+
+    if any(
+        value is None
+        for value in (score, coverage, fabrications, approved)
+    ):
+        return None
+    if approved and fabrications:
+        return None
+    feedback = [
+        match.group(1).strip()
+        for match in re.finditer(
+            r"^\s*\d+[.)]\s+(.+)$",
+            text,
+            flags=re.MULTILINE,
+        )
+        if match.group(1).strip()
+    ]
+    try:
+        return ReviewerDecision(
+            score=score,
+            ats_coverage=coverage,
+            fabrication_count=fabrications,
+            approved=approved,
+            feedback=feedback,
+        )
+    except ValidationError:
+        return None
+
+
+def parse_reviewer_decision(
+    text: str | dict[str, Any] | None,
+) -> ReviewerDecision | None:
+    """Recover an explicit reviewer verdict without inventing missing fields.
+
+    OpenRouter models vary in whether they emit raw JSON, fenced JSON, or the
+    canonical labeled verdict. All accepted forms must explicitly provide the
+    score, ATS coverage, fabrication count, and approval decision.
+    """
+    if isinstance(text, dict):
+        return _decision_from_mapping(text)
+    if not isinstance(text, str):
+        return None
+    cleaned = unicodedata.normalize("NFKC", text).strip()
+    if not cleaned:
+        return None
+
+    decisions = [
+        decision
+        for candidate in _json_review_candidates(cleaned)
+        if (decision := _decision_from_mapping(candidate)) is not None
+    ]
+    unique: dict[str, ReviewerDecision] = {}
+    for decision in decisions:
+        fingerprint = decision.model_dump_json()
+        unique[fingerprint] = decision
+    if len(unique) == 1:
+        return next(iter(unique.values()))
+    if len(unique) > 1:
+        # An echoed schema/example plus a different final answer is ambiguous.
+        return None
+    return _decision_from_prose(cleaned)
 
 
 def audit_resume_structure(resume_markdown: str) -> ResumeStructureAudit:

@@ -13,8 +13,8 @@ Tree (demonstrates all three ADK workflow agent types):
     `-- production_stage (ParallelAgent)       # letter drafts WHILE resume loops
           |-- refinement_loop (LoopAgent, max 3 passes)
           |     |-- resume_writer  -> state["draft_resume"]
-          |     `-- quality_reviewer -> state["review_feedback"]
-          |           (calls exit_loop tool to stop the loop when approved)
+          |     `-- quality_reviewer -> typed review submission tool
+          |           (writes review_feedback; stops only when approved)
           `-- cover_letter_writer  -> state["cover_letter"]
 
 How data flows (the core ADK concept):
@@ -25,9 +25,10 @@ How data flows (the core ADK concept):
 """
 
 from google.adk.agents import LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
+from google.genai import types
 
 from . import config, prompts
-from .tools import exit_loop
+from .tools import submit_quality_review
 
 # --------------------------------------------------------------------------
 # Stage 1 — two independent analyses, run in parallel to save wall-clock time
@@ -66,8 +67,9 @@ match_strategist = LlmAgent(
 
 # --------------------------------------------------------------------------
 # Stage 3a — write/review loop: writer drafts, reviewer critiques or approves.
-# The reviewer's exit_loop tool sets escalate=True, which stops the LoopAgent
-# early; otherwise it runs MAX_REVISION_LOOPS full passes.
+# The reviewer must submit one typed, complete decision. The tool persists
+# canonical feedback and stops the LoopAgent only after every approval gate
+# passes; otherwise the writer receives that feedback on the next pass.
 # --------------------------------------------------------------------------
 resume_writer = LlmAgent(
     name="resume_writer",
@@ -82,8 +84,15 @@ quality_reviewer = LlmAgent(
     model=config.MODEL,
     description="Audits the draft for fabrication, ATS coverage, and craft; approves or returns numbered edits.",
     instruction=prompts.QUALITY_REVIEWER_INSTRUCTION,
-    tools=[exit_loop],
-    output_key=config.STATE_REVIEW_FEEDBACK,
+    tools=[submit_quality_review],
+    generate_content_config=types.GenerateContentConfig(
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.ANY,
+                allowed_function_names=["submit_quality_review"],
+            )
+        )
+    ),
 )
 
 refinement_loop = LoopAgent(
