@@ -91,13 +91,13 @@ API. Swagger remains available at **http://127.0.0.1:8080/docs**.
 No source checkout or Python installation is required:
 
 ```bash
-docker pull ghcr.io/shrprabh/rolefit-resume-agent:latest
+docker pull ghcr.io/shrprabh/resume-maker-agent:latest
 
 docker run --rm -p 8080:8080 \
   -e OPENROUTER="sk-or-..." \
   -e LANGSMITH_API_KEY="lsv2_..." \
   -e LANGSMITH_PROJECT="ResumeMaker" \
-  ghcr.io/shrprabh/rolefit-resume-agent:latest
+  ghcr.io/shrprabh/resume-maker-agent:latest
 ```
 
 Then open **http://127.0.0.1:8080**. Google ADK is optional; add
@@ -109,7 +109,7 @@ putting keys in shell history:
 
 ```bash
 docker run --rm -p 8080:8080 --env-file .env \
-  ghcr.io/shrprabh/rolefit-resume-agent:latest
+  ghcr.io/shrprabh/resume-maker-agent:latest
 ```
 
 Or use the included Compose file:

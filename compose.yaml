@@ -1,6 +1,6 @@
 services:
   rolefit:
-    image: ghcr.io/shrprabh/rolefit-resume-agent:latest
+    image: ghcr.io/shrprabh/resume-maker-agent:latest
     pull_policy: always
     ports:
       - "8080:8080"

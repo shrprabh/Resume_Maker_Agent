@@ -12,7 +12,10 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/rolefit-resume-agent
+  # Keep the package name aligned with this repository. The old
+  # rolefit-resume-agent package predates this repo and its inherited
+  # permissions reject this repository's GITHUB_TOKEN with HTTP 403.
+  IMAGE_NAME: ${{ github.repository_owner }}/resume-maker-agent
 
 jobs:
   publish:
