@@ -1,0 +1,19 @@
+.git
+.github
+.claude
+.venv
+__pycache__
+*.py[cod]
+*.log
+.DS_Store
+
+# Never send credentials into the Docker build context.
+.env
+**/.env
+*.pem
+*.key
+
+# Runtime/generated and local-only content.
+generated_pdfs
+samples
+new_project.txt

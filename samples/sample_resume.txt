@@ -1,0 +1,31 @@
+Shreyas Kumar
+shreyas.kumar.dev@example.com | +1 (555) 210-8842 | Austin, TX | github.com/shreyaskdev | linkedin.com/in/shreyaskdev
+
+SUMMARY
+Backend engineer with 4 years of experience building Python services and data pipelines.
+
+EXPERIENCE
+
+Software Engineer II — Finlytics Inc, Austin TX (Mar 2023 - Present)
+- Built and maintained 12 FastAPI microservices handling 3.5M requests/day for a B2B payments analytics platform
+- Reduced API p95 latency from 480ms to 190ms by introducing Redis caching and async SQLAlchemy connection pooling
+- Designed a PostgreSQL event-sourcing schema that cut reconciliation errors by 37%
+- Led migration of CI pipelines from Jenkins to GitHub Actions, cutting average build time from 22 min to 9 min
+- Mentored 2 junior engineers through onboarding and code review
+
+Software Engineer — DataHarbor LLC, Remote (Jun 2021 - Feb 2023)
+- Developed ETL pipelines in Python and Apache Airflow processing 40GB of daily financial data
+- Wrote a Dockerized ingestion service consuming Kafka streams at 15k messages/sec
+- Improved test coverage from 41% to 87% with pytest and property-based testing
+- Automated AWS infrastructure (EC2, S3, RDS) provisioning with Terraform modules used by 3 teams
+
+PROJECTS
+- JobTrackr (open source): FastAPI + React app for tracking job applications; 240 GitHub stars
+- ledger-diff: CLI tool in Go for diffing double-entry ledgers, used internally at Finlytics
+
+SKILLS
+Python, SQL, Go (basic), FastAPI, Django, PostgreSQL, Redis, Kafka, Apache Airflow, Docker, Terraform, AWS (EC2, S3, RDS), GitHub Actions, pytest
+
+EDUCATION
+B.S. Computer Science, University of Texas at Dallas, 2021
+AWS Certified Solutions Architect - Associate (2023)

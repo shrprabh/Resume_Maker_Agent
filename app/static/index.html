@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Generate an evidence-grounded, ATS-optimized resume and cover letter with a Google ADK multi-agent pipeline.">
+  <title>RoleFit — Tailored resumes, grounded in you</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="RoleFit home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><path d="M8 7.5h10.3a5.7 5.7 0 0 1 0 11.4H14l8.4 7.6H16L8 19.2V7.5Z"/><path d="M14 12.4h4.2a.8.8 0 1 1 0 1.6H14v-1.6Z"/></svg>
+      </span>
+      <span>RoleFit</span>
+    </a>
+    <div class="header-meta">
+      <span class="status-dot"></span>
+      <span id="header-engine">Google ADK pipeline</span>
+      <a href="/docs" target="_blank" rel="noreferrer">API docs</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="eyebrow"><span></span> Six specialist agents. One stronger application.</div>
+      <h1>Tailored resumes,<br><em>grounded in you.</em></h1>
+      <p>Turn your real experience into a focused, ATS-ready resume and cover letter—without invented claims or keyword stuffing.</p>
+      <div class="trust-row">
+        <span><b>01</b> Evidence-first</span>
+        <span><b>02</b> ATS-aware</span>
+        <span><b>03</b> Human-reviewed</span>
+      </div>
+    </section>
+
+    <section class="workspace" aria-label="Resume generation workspace">
+      <form id="generator-form" class="input-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step-label">Step 01</span>
+            <h2>Build your application</h2>
+          </div>
+          <button class="text-button" type="button" id="clear-button">Clear all</button>
+        </div>
+
+        <div class="engine-config">
+          <div class="field-label">
+            <label>AI orchestration engine</label>
+            <span>Choose per generation</span>
+          </div>
+          <div class="engine-switch" role="radiogroup" aria-label="AI engine">
+            <label class="engine-option active">
+              <input type="radio" name="engine" value="google_adk" checked>
+              <span class="engine-logo google-logo">G</span>
+              <span><strong>Google ADK</strong><small>Gemini · Current pipeline</small></span>
+              <span class="engine-check">✓</span>
+            </label>
+            <label class="engine-option">
+              <input type="radio" name="engine" value="langgraph_openrouter">
+              <span class="engine-logo graph-logo">⌘</span>
+              <span><strong>LangGraph</strong><small>OpenRouter · Your model</small></span>
+              <span class="engine-check">✓</span>
+            </label>
+          </div>
+
+          <div class="provider-settings" id="provider-settings" hidden>
+            <div class="provider-title">
+              <div>
+                <strong>OpenRouter configuration</strong>
+                <small>Credentials remain in this browser tab only.</small>
+              </div>
+              <span class="provider-badge">LangChain</span>
+            </div>
+            <div class="settings-grid">
+              <div class="settings-field full">
+                <label for="openrouter-key">OpenRouter API key</label>
+                <div class="secret-input">
+                  <input id="openrouter-key" type="password" autocomplete="off" placeholder="Optional when OPENROUTER is in .env">
+                  <button type="button" class="reveal-button" data-secret="openrouter-key">Show</button>
+                </div>
+                <small>A browser key overrides <code>OPENROUTER</code> or <code>OPENROUTER_API_KEY</code> from the server's .env.</small>
+              </div>
+              <div class="settings-field full">
+                <div class="settings-label-row">
+                  <label for="model-name">OpenRouter model</label>
+                  <span class="model-actions">
+                    <button type="button" class="inline-action" id="recommend-model">Recommend</button>
+                    <button type="button" class="inline-action" id="load-models">Load models</button>
+                  </span>
+                </div>
+                <input id="model-name" list="model-options" value="openai/gpt-4.1-mini" placeholder="OpenRouter model slug" autocomplete="off">
+                <datalist id="model-options"></datalist>
+                <small id="model-help">Quality default: GPT-4.1 mini through OpenRouter</small>
+                <div class="model-recommendation" id="model-recommendation" hidden></div>
+              </div>
+            </div>
+            <div class="connection-row">
+              <button type="button" class="connection-button" id="test-openrouter">Test OpenRouter</button>
+              <span id="openrouter-status">Not tested</span>
+            </div>
+
+            <label class="toggle-row">
+              <span>
+                <strong>LangSmith tracing</strong>
+                <small>Observe agent calls, latency, and token usage.</small>
+              </span>
+              <input id="langsmith-enabled" type="checkbox">
+              <span class="toggle-control"></span>
+            </label>
+
+            <div class="langsmith-settings" id="langsmith-settings" hidden>
+              <div class="settings-field">
+                <label for="langsmith-key">LangSmith API key</label>
+                <div class="secret-input">
+                  <input id="langsmith-key" type="password" autocomplete="off" placeholder="Optional when LANGSMITH_API_KEY is in .env">
+                  <button type="button" class="reveal-button" data-secret="langsmith-key">Show</button>
+                </div>
+              </div>
+              <div class="settings-field">
+                <label for="langsmith-project">Project</label>
+                <input id="langsmith-project" value="rolefit-resume-agent" maxlength="100">
+              </div>
+              <div class="trace-privacy">
+                <div><strong>Privacy mode</strong><small>Resume and JD content are hidden from traces by default.</small></div>
+                <label><input id="trace-content" type="checkbox"> Include full content</label>
+              </div>
+              <div class="connection-row">
+                <button type="button" class="connection-button" id="test-langsmith">Test LangSmith</button>
+                <span id="langsmith-status">Not tested</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-block">
+          <div class="field-label">
+            <label for="job-description">Job description</label>
+            <span id="jd-count">0 characters</span>
+          </div>
+          <textarea id="job-description" required rows="9" placeholder="Paste the complete job description here..."></textarea>
+        </div>
+
+        <div class="field-block">
+          <div class="field-label">
+            <label for="file-input">Your source material</label>
+            <span>PDF, DOCX, TXT or MD</span>
+          </div>
+          <label class="dropzone" id="dropzone" for="file-input">
+            <input id="file-input" type="file" accept=".pdf,.docx,.txt,.md" multiple hidden>
+            <span class="upload-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+            </span>
+            <strong>Drop your files here</strong>
+            <span>or click to browse your resume, projects, and knowledge library</span>
+          </label>
+          <div class="file-list" id="file-list" aria-live="polite"></div>
+        </div>
+
+        <div class="divider"><span>or add context manually</span></div>
+
+        <div class="field-block compact">
+          <div class="field-label">
+            <label for="resume-text">Candidate context <small>Optional with files</small></label>
+            <span id="context-count">0 / 50,000</span>
+          </div>
+          <textarea id="resume-text" maxlength="50000" rows="4" placeholder="Paste achievements, project details, certifications, or extra experience..."></textarea>
+          <small class="context-guidance">Candidate evidence only—do not paste another job description here.</small>
+        </div>
+
+        <div class="form-error" id="form-error" role="alert"></div>
+        <button class="primary-button" id="generate-button" type="submit">
+          <span>Generate tailored application</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+        </button>
+        <p class="privacy-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6V10Z"/></svg>
+          Your documents are processed for this session only.
+        </p>
+      </form>
+
+      <aside class="process-panel">
+        <div class="process-header">
+          <span class="step-label">Step 02</span>
+          <span class="process-state" id="process-state">Ready when you are</span>
+        </div>
+        <h2>Your agent team</h2>
+        <p>Each specialist has one job, passing verified context forward through shared session state.</p>
+
+        <div class="agent-flow" id="agent-flow">
+          <div class="agent-stage" data-stage="0">
+            <span class="stage-number">01</span>
+            <div><strong>Role intelligence</strong><small>JD Analyzer</small></div>
+            <span class="stage-status">Waiting</span>
+          </div>
+          <div class="agent-stage" data-stage="1">
+            <span class="stage-number">02</span>
+            <div><strong>Evidence inventory</strong><small>Profile Analyzer</small></div>
+            <span class="stage-status">Waiting</span>
+          </div>
+          <div class="agent-stage" data-stage="2">
+            <span class="stage-number">03</span>
+            <div><strong>Match strategy</strong><small>Positioning Strategist</small></div>
+            <span class="stage-status">Waiting</span>
+          </div>
+          <div class="agent-stage" data-stage="3">
+            <span class="stage-number">04</span>
+            <div><strong>Resume drafting</strong><small>Resume Writer</small></div>
+            <span class="stage-status">Waiting</span>
+          </div>
+          <div class="agent-stage" data-stage="4">
+            <span class="stage-number">05</span>
+            <div><strong>Quality review</strong><small>ATS & Fact Reviewer</small></div>
+            <span class="stage-status">Waiting</span>
+          </div>
+          <div class="agent-stage" data-stage="5">
+            <span class="stage-number">06</span>
+            <div><strong>Cover letter</strong><small>Letter Writer</small></div>
+            <span class="stage-status">Waiting</span>
+          </div>
+        </div>
+
+        <div class="quality-card">
+          <div class="quality-icon">
+            <svg viewBox="0 0 24 24"><path d="m8 12 2.5 2.5L16 9m5 3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+          </div>
+          <div><strong>Anti-fabrication guardrail</strong><p>Every final claim is checked against your uploaded evidence.</p></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="results" id="results" hidden aria-live="polite">
+      <div class="results-heading">
+        <div>
+          <span class="step-label">Your application</span>
+          <h2>Ready for your review</h2>
+          <p id="approval-copy">The quality agent approved this draft.</p>
+          <div class="run-metadata" id="run-metadata"></div>
+        </div>
+        <div class="result-actions">
+          <a class="secondary-button" id="resume-download" href="#" download>Download resume PDF</a>
+          <a class="secondary-button" id="maximum-download" href="#" download hidden>Download maximum match</a>
+          <a class="primary-button compact-button" id="cover-download" href="#" download>Download cover letter</a>
+        </div>
+      </div>
+
+      <div class="result-shell">
+        <div class="result-tabs" role="tablist">
+          <button class="result-tab active" type="button" role="tab" aria-selected="true" data-target="resume-output">Authentic resume</button>
+          <button class="result-tab" type="button" role="tab" aria-selected="false" data-target="maximum-output">Maximum verified match</button>
+          <button class="result-tab" type="button" role="tab" aria-selected="false" data-target="cover-output">Cover letter</button>
+          <button class="result-tab" type="button" role="tab" aria-selected="false" data-target="insights-output">Agent insights</button>
+        </div>
+        <div class="result-content">
+          <article id="resume-output" class="result-view document-preview active"></article>
+          <div id="maximum-output" class="result-view maximum-view">
+            <div class="maximum-intro" id="maximum-intro">
+              <span class="maximum-badge">Optional agent branch</span>
+              <h3>Maximum Verified Match</h3>
+              <p>Use every job requirement and ATS keyword that your uploaded evidence supports—without inventing experience or spending extra tokens until you ask.</p>
+              <ul>
+                <li>Targets 100% of supported ATS keywords</li>
+                <li>Preserves genuine gaps and protected exclusions</li>
+                <li>Creates a separately audited, downloadable resume</li>
+              </ul>
+              <section class="gap-resolution" aria-labelledby="gap-resolution-title">
+                <div class="gap-resolution-heading">
+                  <div>
+                    <span class="maximum-badge">Optional evidence upgrade</span>
+                    <h4 id="gap-resolution-title">Resolve gaps with evidence</h4>
+                    <p>Check only the gaps that are incorrect, then describe where you used the skill in real work or a product/project.</p>
+                  </div>
+                  <span class="gap-count" id="gap-count">Loading gaps…</span>
+                </div>
+                <div class="gap-notice">
+                  New facts are user-attested. They affect only Maximum Verified Match; your authentic resume stays unchanged.
+                </div>
+                <div class="gap-list" id="gap-list" aria-live="polite"></div>
+                <p class="gap-empty" id="gap-empty" hidden>No unresolved gaps were found. You can generate the evidence-maximized version directly.</p>
+              </section>
+              <button class="primary-button compact-button" id="generate-maximum" type="button">
+                <span>Review evidence and generate</span>
+                <span aria-hidden="true">→</span>
+              </button>
+              <p class="maximum-cost-note" id="maximum-cost-note">Evidence is validated before the two specialist agents run.</p>
+              <div class="form-error maximum-error" id="maximum-error" role="alert"></div>
+            </div>
+            <div id="maximum-result" hidden>
+              <div class="maximum-result-heading">
+                <div>
+                  <span class="maximum-badge">Evidence-maximized resume</span>
+                  <h3 id="maximum-status-title">Ready for review</h3>
+                  <p id="maximum-status-copy"></p>
+                  <button class="maximum-edit-button" id="edit-maximum-evidence" type="button">
+                    Edit evidence and regenerate
+                  </button>
+                </div>
+                <div class="score-grid" aria-label="Maximum match scores">
+                  <div class="score-card"><strong id="maximum-ats-score">—</strong><span>Supported ATS coverage</span></div>
+                  <div class="score-card"><strong id="maximum-role-score">—</strong><span>Overall requirement match</span></div>
+                  <div class="score-card"><strong id="maximum-integrity-score">—</strong><span>Evidence integrity</span></div>
+                </div>
+              </div>
+              <article id="maximum-resume-text" class="maximum-resume document-preview"></article>
+            </div>
+          </div>
+          <article id="cover-output" class="result-view document-preview"></article>
+          <div id="insights-output" class="result-view insights-grid">
+            <details open><summary>Job analysis</summary><pre id="jd-analysis"></pre></details>
+            <details><summary>Candidate profile</summary><pre id="candidate-profile"></pre></details>
+            <details><summary>Match strategy</summary><pre id="match-strategy"></pre></details>
+            <details><summary>Review feedback</summary><pre id="review-feedback"></pre></details>
+            <details id="maximum-insights-card" hidden><summary>Maximum-match evidence audit</summary><pre id="maximum-insights"></pre></details>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>RoleFit <b>×</b> Google ADK + LangGraph</span>
+    <span>Built for honest, focused applications.</span>
+  </footer>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

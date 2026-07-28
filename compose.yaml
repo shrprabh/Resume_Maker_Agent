@@ -1,0 +1,17 @@
+services:
+  rolefit:
+    image: ghcr.io/shrprabh/rolefit-resume-agent:latest
+    pull_policy: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8080"
+    volumes:
+      - rolefit-pdfs:/app/generated_pdfs
+    restart: unless-stopped
+
+volumes:
+  rolefit-pdfs:

@@ -1,0 +1,28 @@
+Senior Backend Engineer — Payments Platform
+Nimbus Financial, Austin, TX (Hybrid)
+
+About the role:
+Nimbus Financial is scaling its payments platform to serve 10M+ end users. You will own core transaction services end to end in a fast-paced environment, working closely with product, compliance, and SRE stakeholders.
+
+What you'll do:
+- Design, build, and operate high-throughput Python microservices for payment processing
+- Own services from architecture through deployment and on-call
+- Improve reliability, latency, and observability of the transaction pipeline
+- Collaborate with compliance on PCI-DSS requirements
+- Mentor mid-level engineers and drive code quality via reviews
+
+Requirements (must have):
+- 4+ years of backend experience with Python
+- Production experience with FastAPI or Django at scale
+- Strong PostgreSQL skills including schema design and query optimization
+- Experience with Kubernetes in production
+- Experience with event streaming (Kafka or similar)
+- CI/CD pipeline ownership (GitHub Actions, Jenkins, or similar)
+- Strong communication skills with cross-functional stakeholders
+
+Nice to have:
+- Terraform / Infrastructure as Code
+- AWS (EKS, RDS, S3)
+- Payments or fintech domain experience
+- Redis caching strategies
+- Grafana/Prometheus observability stack

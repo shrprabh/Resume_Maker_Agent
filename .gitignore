@@ -1,0 +1,8 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+resume_agent/.env
+generated_pdfs/
+.DS_Store
