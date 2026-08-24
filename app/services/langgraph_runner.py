@@ -46,20 +46,30 @@ _OUTPUT_TOKEN_BUDGETS = {
     "maximum_match_reviewer": 1_500,
 }
 
-# OpenRouter counts hidden reasoning against max_tokens. Analytical stages
-# benefit from a small reasoning allowance; document writers need that budget
-# for visible, complete content. Per-call settings also avoid one model-wide
-# policy being wasteful or truncating output for a different specialist.
+# OpenRouter counts hidden reasoning against max_tokens. Use the smallest
+# portable allowance for every stage: some endpoints require reasoning and
+# reject `effort: "none"`, including otherwise straightforward writing calls.
+# `exclude` keeps reasoning traces out of the returned document without
+# disabling the model's mandatory internal reasoning.
 _REASONING_EFFORTS = {
     "jd_analyzer": "minimal",
     "profile_analyzer": "minimal",
     "match_strategist": "minimal",
-    "resume_writer": "none",
+    "resume_writer": "minimal",
     "quality_reviewer": "minimal",
-    "cover_letter_writer": "none",
-    "maximum_match_writer": "none",
+    "cover_letter_writer": "minimal",
+    "maximum_match_writer": "minimal",
     "maximum_match_reviewer": "minimal",
 }
+
+
+def _reasoning_config(run_name: str) -> dict[str, Any]:
+    """Return a fast reasoning policy accepted by mandatory endpoints."""
+
+    return {
+        "effort": _REASONING_EFFORTS.get(run_name, "minimal"),
+        "exclude": True,
+    }
 
 _REVIEW_REQUIRED_FIELDS = [
     "score",
@@ -550,9 +560,7 @@ async def run_pipeline(
         output_budget = _OUTPUT_TOKEN_BUDGETS.get(run_name, 2_600)
         response = await model.bind(
             max_tokens=output_budget,
-            reasoning={
-                "effort": _REASONING_EFFORTS.get(run_name, "minimal")
-            },
+            reasoning=_reasoning_config(run_name),
         ).ainvoke(
             [
                 SystemMessage(content=rendered_instruction),
@@ -935,9 +943,7 @@ async def run_maximum_match(
         output_budget = _OUTPUT_TOKEN_BUDGETS.get(run_name, 2_600)
         response = await model.bind(
             max_tokens=output_budget,
-            reasoning={
-                "effort": _REASONING_EFFORTS.get(run_name, "minimal")
-            },
+            reasoning=_reasoning_config(run_name),
         ).ainvoke(
             [
                 SystemMessage(content=rendered_instruction),

@@ -153,8 +153,11 @@ async def _validate_openrouter_model(api_key: str, model_name: str) -> None:
                             "content": "Reply with exactly OK.",
                         }
                     ],
-                    "max_tokens": 4,
+                    # Some endpoints require reasoning and reject an explicit
+                    # disabled setting. Leave room for hidden tokens plus OK.
+                    "max_tokens": 64,
                     "temperature": 0,
+                    "reasoning": {"effort": "minimal", "exclude": True},
                 },
             )
     except httpx.TimeoutException as exc:

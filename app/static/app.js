@@ -43,7 +43,7 @@ const maximumIntro = document.querySelector("#maximum-intro");
 const maximumResult = document.querySelector("#maximum-result");
 const maximumError = document.querySelector("#maximum-error");
 const maximumDownload = document.querySelector("#maximum-download");
-const maximumInsightsCard = document.querySelector("#maximum-insights-card");
+const insightsOutput = document.querySelector("#insights-output");
 const maximumGapList = document.querySelector("#gap-list");
 const maximumGapCount = document.querySelector("#gap-count");
 const maximumGapEmpty = document.querySelector("#gap-empty");
@@ -728,8 +728,6 @@ function resetMaximumMatch() {
     "Evidence is validated before the two specialist agents run.";
   maximumDownload.hidden = true;
   maximumDownload.removeAttribute("href");
-  maximumInsightsCard.hidden = true;
-  document.querySelector("#maximum-insights").textContent = "";
   renderDocumentPreview(document.querySelector("#maximum-resume-text"), "");
   document.querySelector("#maximum-ats-score").textContent = "—";
   document.querySelector("#maximum-role-score").textContent = "—";
@@ -994,6 +992,19 @@ function addRunChip(label, value, id = "") {
   runMetadata.append(chip);
 }
 
+function renderAgentInsights() {
+  if (!insightsOutput || !currentGeneration) return;
+  if (!window.RoleFitInsights?.render) {
+    insightsOutput.textContent =
+      "The agent insights visualization could not be loaded. Refresh the page and try again.";
+    return;
+  }
+  window.RoleFitInsights.render(insightsOutput, {
+    ...currentGeneration,
+    maximum_match: maximumMatchData,
+  });
+}
+
 function populateMaximumMatch(data) {
   maximumMatchData = data;
   maximumIntro.hidden = true;
@@ -1025,8 +1036,7 @@ function populateMaximumMatch(data) {
   maximumDownload.href = data.resume_pdf_url;
   maximumDownload.download = data.resume_filename;
   maximumDownload.hidden = false;
-  document.querySelector("#maximum-insights").textContent = data.insights_markdown;
-  maximumInsightsCard.hidden = false;
+  renderAgentInsights();
 
   document.querySelector("#maximum-run-chip")?.remove();
   const tokens = data.usage?.total_tokens
@@ -1041,12 +1051,12 @@ function editMaximumEvidence() {
   maximumResult.hidden = true;
   maximumDownload.hidden = true;
   maximumDownload.removeAttribute("href");
-  maximumInsightsCard.hidden = true;
   document.querySelector("#maximum-run-chip")?.remove();
   maximumError.textContent = "";
   maximumError.classList.remove("visible");
   maximumButton.disabled = false;
   updateMaximumEvidenceCount();
+  renderAgentInsights();
   maximumIntro.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -1155,10 +1165,7 @@ function populateResults(data) {
     data.cover_letter_markdown ||
       "Cover letter was not generated."
   );
-  document.querySelector("#jd-analysis").textContent = data.artifacts.jd_analysis;
-  document.querySelector("#candidate-profile").textContent = data.artifacts.candidate_profile;
-  document.querySelector("#match-strategy").textContent = data.artifacts.match_strategy;
-  document.querySelector("#review-feedback").textContent = data.artifacts.review_feedback;
+  renderAgentInsights();
   document.querySelector("#approval-copy").textContent = data.approved
     ? "The quality agent approved this evidence-grounded draft."
     : data.review_valid
@@ -1336,18 +1343,42 @@ clearButton.addEventListener("click", () => {
 });
 
 function activateResultTab(tab) {
+  if (!tab) return;
   document.querySelectorAll(".result-tab").forEach((item) => {
     const active = item === tab;
     item.classList.toggle("active", active);
     item.setAttribute("aria-selected", String(active));
+    item.tabIndex = active ? 0 : -1;
   });
   document.querySelectorAll(".result-view").forEach((item) => {
-    item.classList.toggle("active", item.id === tab.dataset.target);
+    const active = item.id === tab.dataset.target;
+    item.classList.toggle("active", active);
+    item.hidden = !active;
+    item.setAttribute("aria-hidden", String(!active));
   });
 }
 
-document.querySelectorAll(".result-tab").forEach((tab) => {
+const resultTabs = [...document.querySelectorAll(".result-tab")];
+resultTabs.forEach((tab, index) => {
   tab.addEventListener("click", () => activateResultTab(tab));
+  tab.addEventListener("keydown", (event) => {
+    let nextIndex = null;
+    if (event.key === "ArrowRight") {
+      nextIndex = (index + 1) % resultTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (index - 1 + resultTabs.length) % resultTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = resultTabs.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = resultTabs[nextIndex];
+    activateResultTab(nextTab);
+    nextTab.focus();
+    nextTab.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
 });
 
 updateEngineUI();

@@ -248,8 +248,9 @@ fewer than four achievement bullets, drafts over 950 words after safe repair,
 and unfocused Skills sections. Model outputs with more than five valid Skills categories are
 losslessly consolidated into five professional ATS-safe rows before scoring
 and PDF rendering. OpenRouter
-reasoning is disabled for document-writing calls so hidden reasoning tokens
-cannot truncate the visible resume. Experience blocks are normalized into
+reasoning uses the lowest portable effort for document-writing calls because
+some endpoints require it; reasoning traces are excluded so only the requested
+documents are processed. Experience blocks are normalized into
 reverse chronological order without changing their text.
 
 PDF downloads use an ATS-safe single-column layout, readable density-aware

@@ -9,6 +9,7 @@ from app.services.langgraph_runner import (
     _invoke_json_reviewer,
     _is_schema_unsupported_error,
     _maximum_review_approved,
+    _reasoning_config,
     _review_response_format,
 )
 from app.services.resume_scoring import ReviewerDecision
@@ -72,6 +73,17 @@ def message(content: str) -> AIMessage:
 
 
 class ReviewerContractTests(unittest.IsolatedAsyncioTestCase):
+    def test_all_writer_calls_keep_mandatory_reasoning_enabled(self):
+        for run_name in (
+            "resume_writer",
+            "cover_letter_writer",
+            "maximum_match_writer",
+        ):
+            with self.subTest(run_name=run_name):
+                config = _reasoning_config(run_name)
+                self.assertEqual(config["effort"], "minimal")
+                self.assertTrue(config["exclude"])
+
     def test_schema_requires_all_fields_and_rejects_extras(self):
         response_format = _review_response_format()
         self.assertEqual(response_format["type"], "json_schema")

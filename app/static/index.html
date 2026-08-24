@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/insights.css">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -245,12 +246,12 @@
       </aside>
     </section>
 
-    <section class="results" id="results" hidden aria-live="polite">
+    <section class="results" id="results" hidden>
       <div class="results-heading">
         <div>
           <span class="step-label">Your application</span>
           <h2>Ready for your review</h2>
-          <p id="approval-copy">The quality agent approved this draft.</p>
+          <p id="approval-copy" aria-live="polite" aria-atomic="true">The quality agent approved this draft.</p>
           <div class="run-metadata" id="run-metadata"></div>
         </div>
         <div class="result-actions">
@@ -261,15 +262,15 @@
       </div>
 
       <div class="result-shell">
-        <div class="result-tabs" role="tablist">
-          <button class="result-tab active" type="button" role="tab" aria-selected="true" data-target="resume-output">Authentic resume</button>
-          <button class="result-tab" type="button" role="tab" aria-selected="false" data-target="maximum-output">Maximum verified match</button>
-          <button class="result-tab" type="button" role="tab" aria-selected="false" data-target="cover-output">Cover letter</button>
-          <button class="result-tab" type="button" role="tab" aria-selected="false" data-target="insights-output">Agent insights</button>
+        <div class="result-tabs" role="tablist" aria-label="Application result views">
+          <button id="resume-output-tab" class="result-tab active" type="button" role="tab" aria-selected="true" aria-controls="resume-output" tabindex="0" data-target="resume-output">Authentic resume</button>
+          <button id="maximum-output-tab" class="result-tab" type="button" role="tab" aria-selected="false" aria-controls="maximum-output" tabindex="-1" data-target="maximum-output">Maximum verified match</button>
+          <button id="cover-output-tab" class="result-tab" type="button" role="tab" aria-selected="false" aria-controls="cover-output" tabindex="-1" data-target="cover-output">Cover letter</button>
+          <button id="insights-output-tab" class="result-tab" type="button" role="tab" aria-selected="false" aria-controls="insights-output" tabindex="-1" data-target="insights-output">Agent insights</button>
         </div>
         <div class="result-content">
-          <article id="resume-output" class="result-view document-preview active"></article>
-          <div id="maximum-output" class="result-view maximum-view">
+          <article id="resume-output" class="result-view document-preview active" role="tabpanel" aria-labelledby="resume-output-tab" tabindex="0"></article>
+          <div id="maximum-output" class="result-view maximum-view" role="tabpanel" aria-labelledby="maximum-output-tab" tabindex="0" hidden>
             <div class="maximum-intro" id="maximum-intro">
               <span class="maximum-badge">Optional agent branch</span>
               <h3>Maximum Verified Match</h3>
@@ -320,14 +321,8 @@
               <article id="maximum-resume-text" class="maximum-resume document-preview"></article>
             </div>
           </div>
-          <article id="cover-output" class="result-view document-preview"></article>
-          <div id="insights-output" class="result-view insights-grid">
-            <details open><summary>Job analysis</summary><pre id="jd-analysis"></pre></details>
-            <details><summary>Candidate profile</summary><pre id="candidate-profile"></pre></details>
-            <details><summary>Match strategy</summary><pre id="match-strategy"></pre></details>
-            <details><summary>Review feedback</summary><pre id="review-feedback"></pre></details>
-            <details id="maximum-insights-card" hidden><summary>Maximum-match evidence audit</summary><pre id="maximum-insights"></pre></details>
-          </div>
+          <article id="cover-output" class="result-view document-preview" role="tabpanel" aria-labelledby="cover-output-tab" tabindex="0" hidden></article>
+          <section id="insights-output" class="result-view insights-dashboard" role="tabpanel" aria-labelledby="insights-output-tab" tabindex="0" hidden></section>
         </div>
       </div>
     </section>
@@ -338,6 +333,7 @@
     <span>Built for honest, focused applications.</span>
   </footer>
 
+  <script src="/static/insights.js" defer></script>
   <script src="/static/app.js" defer></script>
 </body>
 </html>
